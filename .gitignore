@@ -1,0 +1,8 @@
+.research/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+.venv/
+.local-data/
+frontend/node_modules/
