@@ -13,11 +13,17 @@ class PlanError(Exception):
 
 
 class PlanStore:
-    def __init__(self, path):
+    def __init__(self, path, *, recover_running=True):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS plans (id TEXT PRIMARY KEY, owner TEXT NOT NULL, body TEXT NOT NULL)')
+        if recover_running:
+            self.recover_interrupted()
+        self.path.chmod(0o600)
+
+    def recover_interrupted(self):
+        with self.connect() as db:
             for row in db.execute('SELECT id, body FROM plans').fetchall():
                 p = json.loads(row['body'])
                 if p['status'] == 'submitting':
@@ -26,7 +32,6 @@ class PlanStore:
                 elif p['status'] == 'rechecking':
                     p.update(status='expired', error='上次核价中断，请重新生成方案。')
                     self.write(db, p)
-        self.path.chmod(0o600)
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=10)

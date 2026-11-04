@@ -2,37 +2,72 @@ import React, {useEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import './style.css';
 import {useVoice} from './useVoice';
+import {ActionCard,ActionPlan} from './ActionCard';
 
 type Store={code:string;name:string;address:string;open?:boolean};
 type Selection={store_code:string;product_code:string;quantity:number;rounds:{round_id:string;code:string;quantity:number}[]};
 type Meal={product_code:string;name:string;image?:string;amount_cents:number;choices:string[];request:Selection};
 type Plan={id:string;version:number;status:string;amount_cents:number;summary:{store_name:string;store_address:string;product_name:string;quantity:number;choices:string[];take_way:string};expires_at:number;confirmation_token:string;order?:{order_id?:string;payment_url?:string};error?:string};
-type Message={id:number;role:'user'|'assistant';text:string;speech_text?:string;kind?:'stores'|'meals'|'plan';stores?:Store[];meals?:Meal[];plan?:Plan};
+type ChoiceCard={label:string;detail?:string;image?:string;prompt:string};
+type ImageMessage={id:string;url:string};
+type Message={images?:ImageMessage[];client_id?:string;message_id?:string;delivery?:string;id:number;role:'user'|'assistant';text:string;speech_text?:string;kind?:'stores'|'meals'|'plan';stores?:Store[];meals?:Meal[];plan?:Plan;actionPlan?:ActionPlan;choices?:ChoiceCard[]};
 type Health={order_execution_enabled:boolean;mcd_configured:boolean;agent_configured?:boolean};
-type ChatEvent={type:'stores';stores:Store[]}|{type:'meals';meals:Meal[]}|{type:'plan';plan:Plan};
-type ChatResponse={text:string;speech_text?:string;events:ChatEvent[]};
+type ChatEvent={type:'stores';stores:Store[]}|{type:'meals';meals:Meal[]}|{type:'plan';plan:Plan}|{type:'action_plan';plan:ActionPlan}|{type:'service_choices';choices:ChoiceCard[]}|{type:'service_result';provider:string;data:unknown};
+type ChatResponse={text:string;speech_text?:string;events:ChatEvent[];conversation_reset?:boolean};
 const yuan=(n:number)=>`¥${(n/100).toFixed(2)}`;
 const labels:Record<string,string>={awaiting_confirmation:'请您确认',needs_review:'价格有变化，请再次确认',rechecking:'正在重新核价',submitting:'正在创建订单',created:'订单已创建，待支付',unknown:'订单结果待核查',failed:'未能创建订单',cancelled:'方案已取消',superseded:'方案已替换',expired:'报价已过期'};
-async function api<T>(url:string,body?:unknown):Promise<T>{const r=await fetch(url,{method:body===undefined?'GET':'POST',headers:body===undefined?undefined:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:'这一步暂时没有完成，请稍后重试。');return d}
+async function api<T>(url:string,body?:unknown):Promise<T>{const r=await fetch(url,{method:body===undefined?'GET':'POST',headers:body===undefined?undefined:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});if(!r.headers.get('content-type')?.includes('application/json'))throw Error('本地服务暂时不可用，请稍后重试。');const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:'这一步暂时没有完成，请稍后重试。');return d}
 function Mic(){return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><rect x="8" y="2" width="8" height="13" rx="4"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></svg>}
+function Keyboard(){return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M5 9h2m2 0h2m2 0h2m2 0h2M5 12h2m2 0h2m2 0h2m2 0h2M7 15h10"/></svg>}
+function Photo(){return <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><rect x="3" y="4" width="22" height="20" rx="3"/><circle cx="10" cy="10" r="2"/><path d="m4 21 7-7 4 4 4-6 6 8"/></svg>}
+function Phone(){return <svg viewBox="0 0 28 28" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M7 4 3.5 7.5c-1 6 11 18 17 17L24 21l-5-5-3 2c-3-1-5-3-6-6l2-3-5-5Z"/></svg>}
 function App(){
  const [health,setHealth]=useState<Health>();const [messages,setMessages]=useState<Message[]>([]);const [input,setInput]=useState('');const [stores,setStores]=useState<Store[]>([]);const [busy,setBusy]=useState('正在恢复对话');const [error,setError]=useState('');const [meals,setMeals]=useState<Meal[]>([]);const [plan,setPlan]=useState<Plan>();const [modal,setModal]=useState(false);const [now,setNow]=useState(Date.now());const counter=useRef(0);const lock=useRef(false);const end=useRef<HTMLDivElement>(null);const dialog=useRef<HTMLDivElement>(null);
- const [inputMode,setInputMode]=useState<'text'|'voice'>('text');
- const voice=useVoice(text=>{void send(text)},setError);
+ const [ready,setReady]=useState(false);const [chatPending,setChatPending]=useState(0);const [liveReply,setLiveReply]=useState('');const [contactStatus,setContactStatus]=useState('');const pendingIds=useRef(new Set<string>());const interrupted=useRef(false);
+ const [inputMode,setInputMode]=useState<'text'|'voice'>('text');const [extrasOpen,setExtrasOpen]=useState(false);const [attachments,setAttachments]=useState<ImageMessage[]>([]);const [uploading,setUploading]=useState(false);const imageInput=useRef<HTMLInputElement>(null);
+ const [activeAction,setActiveAction]=useState('');
+ const [activeChoices,setActiveChoices]=useState<ChoiceCard[]>();
+ const voice=useVoice(text=>{void send(text)},setError,()=>{interrupted.current=true;setLiveReply('');});
  const add=(m:Omit<Message,'id'>)=>setMessages(old=>[...old,{...m,id:++counter.current}]);
+ function receive(e:any,replay=false){
+  if(e.type==='accepted'){
+   pendingIds.current.add(e.message_id);
+   setMessages(old=>old.some(m=>m.client_id===e.client_id)?old.map(m=>m.client_id===e.client_id?{...m,message_id:e.message_id,delivery:'已送达',images:e.images}:m):[...old,{id:++counter.current,role:'user',text:e.text,images:e.images,client_id:e.client_id,message_id:e.message_id,delivery:'已送达'}]);
+  }else if(e.type==='started'){interrupted.current=false;setLiveReply('');setContactStatus('小瑞正在处理，您可以继续说');}
+  else if(e.type==='delta'&&!interrupted.current){setLiveReply(old=>(old+e.text).slice(-12000));}
+  else if(e.type==='progress'){setContactStatus(e.text);}
+  else if(e.type==='completed'||e.type==='failed'){
+   for(const id of e.message_ids||[e.message_id])pendingIds.current.delete(id);
+   setLiveReply('');
+   if(e.type==='failed'){add({role:'assistant',text:e.text,speech_text:e.text});if(!replay&&(voice.inCall||inputMode==='voice')&&!interrupted.current)void voice.speak(e.text);}
+   else if(!e.superseded){const d=e.response as ChatResponse;if(d.conversation_reset){setMessages([]);setStores([]);setMeals([]);setPlan(undefined);setModal(false);}displayResponse(d);if(!replay&&(voice.inCall||inputMode==='voice')&&!interrupted.current&&d.speech_text)void voice.speak(d.speech_text);}
+   if(!replay)void api<{actions:ActionPlan[]}>('/api/actions').then(d=>d.actions.forEach(updateAction)).catch(()=>{});
+  }
+  setChatPending(pendingIds.current.size);
+ }
+ const receiver=useRef(receive);receiver.current=receive;
  useEffect(()=>{
-  let alive=true;
-  Promise.all([api<Health>('/api/health'),api<{messages:({role:'user'|'assistant'}&ChatResponse)[]}>('/api/chat/history')]).then(([h,history])=>{
+  let alive=true;let source:EventSource|undefined;
+  api<Health>('/api/health').then(async h=>{
+   const state=await api<{events:any[];cursor:number;pending:number}>('/api/contact/state');
    if(!alive)return;setHealth(h);
-   for(const message of history.messages){if(message.role==='user')add({role:'user',text:message.text});else displayResponse(message)}
-  }).catch(()=>{if(alive)setError('未能恢复对话，请检查本地服务后刷新页面。')}).finally(()=>{if(alive)setBusy('')});
-  const t=setInterval(()=>setNow(Date.now()),1000);return()=>{alive=false;clearInterval(t)}
+   if(state.events.length){state.events.forEach(e=>receiver.current(e,true));}else{const history=await api<{messages:({role:'user'|'assistant'}&ChatResponse)[]}>('/api/chat/history');if(!alive)return;for(const message of history.messages){if(message.role==='user')add({role:'user',text:message.text});else displayResponse(message);}}
+   if(!alive)return;setChatPending(state.pending);setReady(true);setBusy('');
+   source=new EventSource(`/api/contact/events?after=${state.cursor}`);
+   source.onmessage=e=>{try{receiver.current(JSON.parse(e.data));}catch{setError('消息显示异常，请刷新恢复记录。');}};
+   source.onerror=()=>setContactStatus('消息连接正在恢复，已接收的消息仍会继续处理。');
+   source.onopen=()=>setContactStatus('');
+   const actions=await api<{actions:ActionPlan[]}>('/api/actions');if(alive)actions.actions.forEach(updateAction);
+  }).catch(()=>{if(alive){setError('未能连接小瑞，请检查服务后刷新页面。');setBusy('');}});
+  const t=setInterval(()=>setNow(Date.now()),1000);return()=>{alive=false;source?.close();clearInterval(t);};
  },[]);
- useEffect(()=>{end.current?.scrollIntoView({behavior:'smooth',block:'end'})},[messages,busy]);
+ useEffect(()=>{end.current?.scrollIntoView({behavior:'smooth',block:'end'})},[messages,busy,liveReply]);
  useEffect(()=>{if(!modal)return;const previous=document.activeElement as HTMLElement|null;const el=dialog.current;el?.querySelector<HTMLButtonElement>('button')?.focus();function key(e:KeyboardEvent){if(e.key==='Escape')setModal(false);if(e.key==='Tab'&&el){const b=Array.from(el.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));if(!b.length)return;const first=b[0],last=b[b.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}}document.addEventListener('keydown',key);return()=>{document.removeEventListener('keydown',key);previous?.focus()}},[modal]);
+ useEffect(()=>{if(!extrasOpen)return;const close=(e:KeyboardEvent)=>{if(e.key==='Escape')setExtrasOpen(false);};document.addEventListener('keydown',close);return()=>document.removeEventListener('keydown',close);},[extrasOpen]);
  const blocked=Boolean(plan&&['unknown','submitting','rechecking'].includes(plan.status));
  async function task(title:string,fn:()=>Promise<void>){if(lock.current)return;lock.current=true;setBusy(title);setError('');try{await fn()}catch(e){setError(e instanceof Error?e.message:'暂时没有完成，请重试。')}finally{setBusy('');lock.current=false}}
  function update(p:Plan){setPlan(p);setMessages(old=>old.map(m=>m.plan?.id===p.id?{...m,plan:p}:m))}
+ function updateAction(p:ActionPlan){setMessages(old=>old.map(m=>m.actionPlan?.id===p.id?{...m,actionPlan:p}:m))}
  async function release(){if(plan&&['awaiting_confirmation','needs_review','expired'].includes(plan.status)){const d=await api<{plan:Plan}>(`/api/plans/${plan.id}/cancel`,{});update(d.plan)}}
  function displayResponse(d:ChatResponse){
    const response:Omit<Message,'id'>={role:'assistant',text:d.text,speech_text:d.speech_text};
@@ -43,32 +78,46 @@ function App(){
     if(event.type==='stores'){setStores(event.stores);setMeals([]);message.kind='stores';message.stores=event.stores}
     if(event.type==='meals'){setMeals(event.meals);message.kind='meals';message.meals=event.meals}
     if(event.type==='plan'){update(event.plan);message.kind='plan';message.plan=event.plan}
+    if(event.type==='action_plan'){updateAction(event.plan);setActiveAction(event.plan.id);message.actionPlan=event.plan}
+    if(event.type==='service_choices'){message.choices=event.choices;setActiveChoices(event.choices)}
     add(message);
    });
  }
  async function send(spoken?:string){
-  const text=(spoken??input).trim();if(!text||busy||lock.current||blocked)return;
-  voice.cancel();voice.stopSpeech();setInput('');
-  await task('小瑞正在处理',async()=>{
-   add({role:'user',text});
-   const d=await api<ChatResponse>('/api/chat',{text});
-   displayResponse(d);
-   const events=d.events??[];
-   // Refresh a pending plan after an Agent cancellation/replacement.
-   if(plan&&!events.some(event=>event.type==='plan')){
-    try{const current=await api<{plan:Plan}>(`/api/plans/${plan.id}`);update(current.plan)}catch{}
-   }
-   if(d.speech_text)void voice.speak(d.speech_text);
-  });
+  const outgoingImages=spoken===undefined?attachments:[];const text=(spoken??input).trim()||(outgoingImages.length?'请看看这张图片。':'');if(!text||!ready||uploading)return;
+  if(outgoingImages.length)setAttachments([]);setExtrasOpen(false);
+  voice.stopSpeech();interrupted.current=true;setLiveReply('');setInput('');setActiveChoices(undefined);setActiveAction('');setPlan(undefined);setModal(false);
+  const client_id=crypto.randomUUID();add({role:'user',text,client_id,images:outgoingImages,delivery:'正在发送'});
+  await transmit(text,client_id,outgoingImages);
  }
+ async function transmit(text:string,client_id:string,images:ImageMessage[]=[]){
+  try{await api('/api/contact/messages',{text,client_id,image_ids:images.map(i=>i.id)});}
+  catch(e){setMessages(old=>old.map(m=>m.client_id===client_id&&m.delivery!=='已送达'?{...m,delivery:'发送结果待核实'}:m));setError(e instanceof Error?e.message:'连接已断开，可以点击消息旁重试；不会重复提交同一条消息。');}
+ }
+ async function selectImages(files:FileList|null){
+  if(!files?.length)return;setExtrasOpen(false);setUploading(true);setError('');
+  try{if(files.length+attachments.length>4)throw Error('每条消息最多发送四张图片。');
+   for(const file of Array.from(files)){
+    if(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>8_000_000)throw Error('请选择 8 MB 以内的 JPG、PNG 或 WebP 图片。');
+    const data_url=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(Error('图片读取失败，请重新选择。'));reader.readAsDataURL(file);});
+    const image=await api<ImageMessage>('/api/contact/images',{data_url});setAttachments(old=>[...old,image]);
+   }
+  }catch(e){setError(e instanceof Error?e.message:'图片暂时无法发送。');}finally{setUploading(false);if(imageInput.current)imageInput.current.value='';}
+ }
+ function switchInput(){if(voice.recording)voice.cancelRecording();setInputMode(old=>old==='text'?'voice':'text');setExtrasOpen(false);}
  async function chooseStore(s:Store){await send(`选择门店：${s.name}。`)}
  async function selectMeal(m:Meal,index:number){await send(`选第${index+1}份套餐，${m.name}。`)}
  async function cancel(p:Plan){await task('正在取消方案',async()=>{const d=await api<{plan:Plan}>(`/api/plans/${p.id}/cancel`,{});update(d.plan);add({role:'assistant',text:'这份方案已取消，没有创建订单。您可以重新选择。'})})}
  async function confirm(){if(!plan)return;setModal(false);await task('正在核实价格并创建订单，请勿重复操作',async()=>{try{const d=await api<{plan:Plan}>(`/api/plans/${plan.id}/confirm`,{version:plan.version,confirmation_token:plan.confirmation_token,confirmation_text:'确认下单'});update(d.plan)}catch(e){try{const d=await api<{plan:Plan}>(`/api/plans/${plan.id}`);update(d.plan)}catch{}throw e}})}
- async function fresh(){if(blocked)return;voice.cancel();voice.stopSpeech();await task('正在开始新对话',async()=>{await release();await api('/api/chat/reset',{});setMessages([]);setStores([]);setMeals([]);setPlan(undefined);setModal(false);setInput('')})}
+ async function fresh(){if(blocked||chatPending)return;voice.cancel();voice.stopSpeech();await task('正在开始新对话',async()=>{await release();await api('/api/chat/reset',{});setMessages([]);setStores([]);setMeals([]);setPlan(undefined);setModal(false);setInput('');setAttachments([]);setExtrasOpen(false)})}
  function planCard(p:Plan){const current=p.id===plan?.id;const review=['awaiting_confirmation','needs_review'].includes(p.status);const expired=p.expires_at*1000<=now;const payment=p.order?.payment_url;return <div className="order-card"><div className="card-overline">{labels[expired&&review?'expired':p.status]||p.status}</div><h3>{p.summary.product_name} <small>×{p.summary.quantity}</small></h3><ul>{p.summary.choices.map((s,i)=><li key={i}>{s}</li>)}</ul><div className="pickup"><strong>{p.summary.store_name}</strong><span>{p.summary.store_address}</span><span>{p.summary.take_way}</span></div><div className="total"><span>本次总价</span><strong>{yuan(p.amount_cents)}</strong></div>{p.error&&<p className="note">{p.error}</p>}{review&&!health?.order_execution_enabled&&<p className="note">当前仅查看真实报价，下单尚未开启。</p>}{p.status==='unknown'&&<p className="note">请到麦当劳官方渠道核查，暂时不要重复下单。</p>}{p.status==='created'&&<><p>订单号：{p.order?.order_id}，尚未代表支付成功。</p>{payment?.startsWith('https://')&&<a className="primary link-button" href={payment} target="_blank" rel="noreferrer">前往官方支付页面 ↗</a>}</>}{review&&current&&<div className="card-actions"><button className="primary" disabled={!!busy||expired||!health?.order_execution_enabled} onClick={()=>setModal(true)}>确认这个方案</button><button disabled={!!busy} onClick={()=>cancel(p)}>取消方案</button></div>}<small className="disclaimer">到店自取 · 官方核价 · 下单前再次核实</small></div>}
- return <div className={messages.length?"app":"app empty"}><header><a href="/" className="brand">小瑞</a><button className="new-chat" onClick={fresh} disabled={!!busy||blocked}>＋ 新对话</button></header><main className={messages.length?'conversation':'welcome'}>{!messages.length?<div className="greeting"><h1>小瑞</h1></div>:messages.map(m=><article className={'message '+m.role} key={m.id}><div className="avatar" aria-hidden="true">{m.role==='assistant'?'瑞':'您'}</div><div className="message-body">{m.text&&<p className="message-text">{m.text}</p>}{m.speech_text&&<button className="speech-button" type="button" onClick={()=>voice.speaking||voice.loadingSpeech?voice.stopSpeech():void voice.speak(m.speech_text!)}>{voice.loadingSpeech?'停止生成语音':voice.speaking?'停止播报':'▶ 听小瑞说'}</button>}{m.stores&&<div className="store-list">{m.stores.map(s=><button className="store-card" key={s.code} onClick={()=>chooseStore(s)} disabled={!!busy||blocked||s.open===false||m.stores!==stores}><strong>{s.name}</strong><span>{s.address}{s.open===false?' · 暂未营业':''}</span><small>在这家取餐 →</small></button>)}</div>}{m.meals&&<div className="meal-grid">{m.meals.map((meal,i)=><div className="meal-card" key={meal.product_code}><div className="meal-image">{meal.image?<img src={meal.image} alt={meal.name} loading="lazy"/>:<span>暂无餐品图片</span>}<span className="letter">{String.fromCharCode(65+i)}</span></div><div className="meal-content"><h3>{meal.name}</h3><p>{meal.choices.join(' · ')}</p><strong className="meal-price">{yuan(meal.amount_cents)}</strong><small>到店自取 · 本次官方核价</small><button disabled={!!busy||blocked||m.meals!==meals} onClick={()=>selectMeal(meal,i)}>选 {String.fromCharCode(65+i)} 这份</button></div></div>)}</div>}{m.plan&&planCard(m.plan)}</div></article>)}{busy&&<div className="busy" role="status"><span className="spinner"/>{busy}…</div>}{error&&<div className="error" role="alert">{error}<button onClick={()=>setError('')}>知道了</button></div>}{!health?.mcd_configured&&health&&<p className="error">请先在本地 .env 配置麦当劳 Token。</p>}<div ref={end}/></main><div className="composer-wrap"><form className={"composer "+(inputMode==='voice'?'voice-mode':'')} onSubmit={e=>{e.preventDefault();if(inputMode==='text')void send()}}>
-{inputMode==='text'?<><label className="sr-only" htmlFor="chat-input">发消息给小瑞</label><textarea id="chat-input" value={input} onChange={e=>setInput(e.target.value)} placeholder="发消息给小瑞" rows={1} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send()}}}/><button type="button" className="mode-switch" disabled={!!busy||blocked} onClick={()=>setInputMode('voice')} aria-label="切换到语音模式" title="语音输入"><Mic/></button><button className="send" disabled={!input.trim()||!!busy||blocked} aria-label="发送消息">↑</button></>:<><button type="button" className="mode-switch" aria-label="切换到文字模式" title="文字输入" onClick={()=>{voice.cancel();setInputMode('text')}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M5 9h2m2 0h2m2 0h2m2 0h2M5 12h2m2 0h2m2 0h2m2 0h2M7 15h10"/></svg></button><button type="button" className={"record-line "+(voice.phase==='listening'?'is-listening':'')} onClick={()=>void voice.start()} disabled={!!busy||blocked||voice.phase==='connecting'||voice.phase==='finishing'} aria-label={voice.phase==='listening'?'停止录音并发送':'开始录音'}><span className="record-indicator" aria-hidden="true">{voice.phase==='listening'?<span className="stop-square"/>:<Mic/>}</span><span className="record-caption" role="status">{voice.phase==='listening'?(voice.transcript||'正在听，点击停止'):voice.phase==='connecting'?'正在连接…':voice.phase==='finishing'?'正在识别…':'点击开始说话'}</span>{voice.phase==='listening'&&<span className="sound-bars" aria-hidden="true"><i/><i/><i/><i/><i/></span>}</button></>}
-</form></div>{modal&&plan&&<div className="modal-backdrop"><div ref={dialog} className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title"><h2 id="confirm-title">最后确认一次</h2><p>{plan.summary.product_name}，共 {yuan(plan.amount_cents)}，在 {plan.summary.store_name} {plan.summary.take_way}。</p><p>确认后将创建真实待支付订单，支付仍在官方页面完成。</p><button onClick={()=>setModal(false)}>先不下单，返回看看</button><button className="primary" onClick={confirm} disabled={!!busy||!health?.order_execution_enabled}>确认下单 · {yuan(plan.amount_cents)}</button></div></div>}</div>
+ return <div className={messages.length?"app":"app empty"}><header><a href="/" className="brand">小瑞</a><button className="new-chat" onClick={fresh} disabled={!!busy||blocked||!!chatPending}>＋ 新对话</button></header><main className={messages.length?'conversation':'welcome'} onClick={()=>setExtrasOpen(false)}>{!messages.length?<div className="greeting"><h1>小瑞</h1></div>:messages.map(m=><article className={'message '+m.role} key={m.id}><div className="avatar" aria-hidden="true">{m.role==='assistant'?'瑞':'您'}</div><div className="message-body">{!!m.images?.length&&<div className="message-images">{m.images.map(image=><a href={image.url} target="_blank" rel="noreferrer" key={image.id}><img src={image.url} alt="发送的图片"/></a>)}</div>}{m.text&&<p className="message-text">{m.text}</p>}{m.delivery&&<small className="delivery">{m.delivery}{m.delivery==='发送结果待核实'&&m.client_id&&<button type="button" onClick={()=>void transmit(m.text,m.client_id!,m.images)}>重试发送</button>}</small>}{m.speech_text&&<button className="speech-button" type="button" onClick={()=>voice.speaking||voice.loadingSpeech?voice.stopSpeech():void voice.speak(m.speech_text!)}>{voice.loadingSpeech?'停止生成语音':voice.speaking?'停止播报':'▶ 听小瑞说'}</button>}{m.stores&&<div className="store-list">{m.stores.map(s=><button className="store-card" key={s.code} onClick={()=>chooseStore(s)} disabled={!!busy||blocked||s.open===false||m.stores!==stores}><strong>{s.name}</strong><span>{s.address}{s.open===false?' · 暂未营业':''}</span><small>在这家取餐 →</small></button>)}</div>}{m.meals&&<div className="meal-grid">{m.meals.map((meal,i)=><div className="meal-card" key={meal.product_code}><div className="meal-image">{meal.image?<img src={meal.image} alt={meal.name} loading="lazy"/>:<span>暂无餐品图片</span>}<span className="letter">{String.fromCharCode(65+i)}</span></div><div className="meal-content"><h3>{meal.name}</h3><p>{meal.choices.join(' · ')}</p><strong className="meal-price">{yuan(meal.amount_cents)}</strong><small>到店自取 · 本次官方核价</small><button disabled={!!busy||blocked||m.meals!==meals} onClick={()=>selectMeal(meal,i)}>选 {String.fromCharCode(65+i)} 这份</button></div></div>)}</div>}{m.plan&&planCard(m.plan)}{m.actionPlan&&<ActionCard plan={m.actionPlan} active={m.actionPlan.id===activeAction&&chatPending===0} onChange={updateAction} speak={text=>void voice.speak(text)}/>} {m.choices&&<div className="service-choice-grid">{m.choices.map((c,i)=><button className="store-card" key={i} disabled={!!busy||m.choices!==activeChoices} onClick={()=>void send(c.prompt)}>{c.image&&<img src={c.image} alt={c.label} loading="lazy"/>}<strong>{c.label}</strong>{c.detail&&<span>{c.detail}</span>}</button>)}</div>}</div></article>)}{liveReply&&<article className="message assistant"><div className="avatar">瑞</div><div className="message-body"><p className="message-text">{liveReply}</p></div></article>}{chatPending>0&&<div className="contact-progress" role="status">{contactStatus||`小瑞正在处理 · ${chatPending} 条消息`}<span>您可以继续发消息</span></div>}{busy&&<div className="busy" role="status"><span className="spinner"/>{busy}…</div>}{error&&<div className="error" role="alert">{error}<button onClick={()=>setError('')}>知道了</button></div>}{!health?.mcd_configured&&health&&<p className="error">请先在本地 .env 配置麦当劳 Token。</p>}<div ref={end}/></main><div className="composer-wrap">{voice.inCall&&<div className="call-bar" role="status"><span className="call-dot"/><div><strong>{voice.phase==='connecting'?'正在接通小瑞':'与小瑞通话中'}</strong><span>{voice.transcript|| (voice.speaking?'小瑞正在说，您可以插话':voice.phase==='finishing'?'正在辨认刚才的话，您可以继续说':'我在听，停顿后会自动发送')}</span></div><button type="button" className="hangup" onClick={voice.endCall}>挂断</button></div>}{attachments.length>0&&<div className="attachment-tray">{attachments.map(image=><div key={image.id}><img src={image.url} alt="待发送图片"/><button type="button" aria-label="移除这张图片" onClick={()=>setAttachments(old=>old.filter(i=>i.id!==image.id))}>×</button></div>)}<span>图片将随下一条消息发送</span></div>}{uploading&&<div className="upload-progress" role="status">正在准备图片…</div>}
+<form className="composer wechat-composer" onSubmit={e=>{e.preventDefault();void send();}}>
+<button type="button" className="mode-switch" disabled={!ready||voice.inCall} onClick={switchInput} aria-label={inputMode==='text'?'切换到语音输入':'切换到文字输入'} title={inputMode==='text'?'语音输入':'文字输入'}>{inputMode==='text'?<Mic/>:<Keyboard/>}</button>
+{inputMode==='text'||voice.inCall?<><label className="sr-only" htmlFor="chat-input">发消息给小瑞</label><textarea id="chat-input" value={input} onFocus={()=>setExtrasOpen(false)} onChange={e=>setInput(e.target.value)} placeholder={voice.inCall?'通话中也可以打字补充':'发消息给小瑞'} rows={1} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send();}}}/></>:<button type="button" className={'record-line '+(voice.recording?'is-listening':'')} disabled={!ready||voice.phase==='finishing'} onClick={()=>voice.recording?voice.stopRecording():void voice.startRecording()} aria-label={voice.recording?'停止录音并发送':'开始语音输入'}><span className="record-indicator">{voice.recording?<span className="stop-square"/>:<Mic/>}</span><span className="record-caption">{voice.recording?(voice.phase==='connecting'?'正在连接…':voice.phase==='finishing'?'正在识别…':voice.transcript||'正在听，点击停止并发送'):'点击说话'}</span></button>}
+{(input.trim()||attachments.length>0)&&(inputMode==='text'||attachments.length>0)&&<button className="send" disabled={!ready||uploading} aria-label="发送消息">发送</button>}
+<button type="button" className={'mode-switch plus-button '+(extrasOpen?'expanded':'')} disabled={!ready} aria-label={extrasOpen?'收起更多功能':'更多功能'} aria-expanded={extrasOpen} aria-controls="composer-extras" onClick={()=>{if(voice.recording)voice.cancelRecording();setExtrasOpen(old=>!old);}}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M7 12h10"/></svg></button>
+<input ref={imageInput} type="file" hidden style={{display:'none'}} tabIndex={-1} accept="image/jpeg,image/png,image/webp" multiple aria-label="选择图片" onChange={e=>void selectImages(e.target.files)}/>
+</form>{extrasOpen&&<div id="composer-extras" className="composer-extras" aria-label="更多功能"><button type="button" disabled={uploading} onClick={()=>imageInput.current?.click()}><span className="extra-icon"><Photo/></span><span>图片</span></button><button type="button" onClick={()=>{setExtrasOpen(false);setInputMode('text');void voice.startCall();}}><span className="extra-icon"><Phone/></span><span>{voice.inCall?'结束通话':'语音通话'}</span></button></div>}</div>{modal&&plan&&<div className="modal-backdrop"><div ref={dialog} className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title"><h2 id="confirm-title">最后确认一次</h2><p>{plan.summary.product_name}，共 {yuan(plan.amount_cents)}，在 {plan.summary.store_name} {plan.summary.take_way}。</p><p>确认后将创建真实待支付订单，支付仍在官方页面完成。</p><button onClick={()=>setModal(false)}>先不下单，返回看看</button><button className="primary" onClick={confirm} disabled={!!busy||!health?.order_execution_enabled}>确认下单 · {yuan(plan.amount_cents)}</button></div></div>}</div>
 }
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);

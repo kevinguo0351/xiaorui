@@ -238,7 +238,7 @@ class McdService:
             return None
 
         order_id = find(('orderId', 'orderCode', 'orderNo', 'orderNumber'), data)
-        payment_url = find(('payUrl', 'paymentUrl', 'payLink', 'paymentLink'), data)
+        payment_url = find(('payH5Url', 'payUrl', 'paymentUrl', 'payLink', 'paymentLink'), data)
         if payment_url and not payment_url.startswith('https://'):
             payment_url = None
         return {'order_id': order_id, 'payment_url': payment_url, 'raw': data}

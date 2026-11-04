@@ -1,0 +1,9 @@
+{
+  "phase": "after_user_recharge",
+  "real_model_passed": false,
+  "model_error_code": "SetLimitExceeded",
+  "continuous_messages_accepted": true,
+  "real_tts_asr_two_turns_passed": true,
+  "physical_microphone_tested": false,
+  "business_writes": false
+}

@@ -13,6 +13,7 @@ dependencies = [
   "websockets>=15,<17",
   "python-socks>=2.7,<3",
   "nanobot-ai==0.4.0",
+  "pillow>=13,<14",
 ]
 
 [tool.uv]

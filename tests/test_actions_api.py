@@ -1,0 +1,51 @@
+"""Real ASGI boundary checks with isolated state and no external requests."""
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+import httpx
+
+from app.agent import AgentService
+from app.plans import PlanStore
+
+
+class ActionApiTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        import app.main as api
+        self.tmp=tempfile.TemporaryDirectory()
+        root=Path(self.tmp.name)
+        agent=AgentService(SimpleNamespace(stores={}),PlanStore(root/'plans.sqlite3'),data_dir=root/'agent')
+        agent.actions._enabled=lambda _:True
+        self.quote={'request':{},'summary':{'商品':'unit'},'amount_cents':1000,'comparison':{'amount':1000}}
+        self.adapter=SimpleNamespace(quote=AsyncMock(return_value=self.quote),execute=AsyncMock(return_value={'order_id':'unit-order'}))
+        agent.actions.register('mcd',self.adapter)
+        self.agent=agent
+        self.patch=patch.object(api,'agent',agent);self.patch.start()
+        self.client=httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app),base_url='http://localhost')
+        await self.client.get('/api/health')
+        self.owner=self.client.cookies['pa_session']
+        self.plan=agent.actions.prepare(self.owner,'mcd','create',{},self.quote)
+
+    async def asyncTearDown(self):
+        await self.client.aclose();self.patch.stop();self.tmp.cleanup()
+
+    def body(self):
+        return {'version':self.plan['version'],'confirmation_token':self.plan['confirmation_token'],'confirmation_text':'确认下单'}
+
+    async def test_foreign_cookie_and_boolean_version_cannot_execute(self):
+        url=f'/api/actions/{self.plan["id"]}/confirm'
+        body=self.body();body['version']=True
+        self.assertEqual((await self.client.post(url,json=body)).status_code,422)
+        self.client.cookies.clear()
+        self.assertEqual((await self.client.post(url,json=self.body())).status_code,404)
+        self.adapter.execute.assert_not_awaited()
+
+    async def test_exact_card_confirmation_executes_once(self):
+        url=f'/api/actions/{self.plan["id"]}/confirm'
+        first=await self.client.post(url,json=self.body())
+        second=await self.client.post(url,json=self.body())
+        self.assertEqual(first.status_code,200)
+        self.assertEqual(first.json()['plan']['status'],'created')
+        self.assertEqual(second.json()['plan']['status'],'created')
+        self.adapter.execute.assert_awaited_once()

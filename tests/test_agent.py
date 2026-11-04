@@ -86,6 +86,46 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(AgentError) as caught:await self.agent.chat('a','hello')
         self.assertEqual(caught.exception.status,409)
 
+    async def test_queued_confirmation_cannot_approve_a_different_proposal(self):
+        quote={'request':{},'summary':{'商品':'test'},'amount_cents':1000,'comparison':{}}
+        plan=self.agent.actions.prepare('a','mcd','create',{},quote)
+        confirm=AsyncMock()
+        with patch.object(self.agent.actions,'confirm',confirm):
+            result=await self.agent.chat('a','确认下单',expected_confirmation=['another-plan',plan['version']])
+        confirm.assert_not_awaited()
+        self.assertIn('没有对应',result['text'])
+
+    async def test_image_caption_cannot_execute_host_confirmation(self):
+        from app.contact_events import contact_media
+        quote={'request':{},'summary':{'商品':'test'},'amount_cents':1000,'comparison':{}}
+        self.agent.actions.prepare('a','mcd','create',{},quote)
+        confirm=AsyncMock();self.agent._run=AsyncMock(return_value='收到图片')
+        token=contact_media.set(['test-only-image.jpg'])
+        try:
+            with patch.object(self.agent.actions,'confirm',confirm):
+                result=await self.agent.chat('a','确认下单')
+        finally:
+            contact_media.reset(token)
+        confirm.assert_not_awaited()
+        self.assertEqual(result['text'],'收到图片')
+
+    async def test_model_quota_error_is_reported_without_account_details(self):
+        from types import SimpleNamespace
+        class QuotaBot:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self,*args):
+                pass
+            async def stream(self,*args,**kwargs):
+                yield SimpleNamespace(type='run.completed',name=None,result=SimpleNamespace(
+                    error='SetLimitExceeded: private-account-detail',stop_reason='error'))
+        with patch('app.agent.build_runtime',return_value=QuotaBot()):
+            with self.assertRaises(AgentError) as caught:
+                await self.agent.chat('a','你好')
+        self.assertEqual(caught.exception.status,503)
+        self.assertIn('用量上限',caught.exception.message)
+        self.assertNotIn('private-account-detail',caught.exception.message)
+
     async def test_model_failure_preserves_real_events_and_failed_task(self):
         async def failure(owner,session,text,events,trace):
             events.append({'type':'stores','stores':[]})
@@ -103,3 +143,21 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         await self.agent.reset('a')
         self.assertNotEqual(before,self.agent._session('a').conversation_id)
         self.assertIn('不要冰',str(self.agent.store.profile()))
+
+    async def test_forget_rotates_thread_and_does_not_restore_old_display(self):
+        self.agent.store.set_fact('test.nickname', 'test-person-only')
+        self.agent._run = AsyncMock(return_value='已保存。')
+        await self.agent.chat('a', 'remember test-person-only')
+        before = self.agent._session('a').conversation_id
+        async def forget(owner, session, text, events, trace):
+            result = await self.agent._tool(session, owner, 'personal_profile',
+                                           {'action': 'forget', 'key': 'test.nickname'}, events)
+            self.assertTrue(result['forgotten'])
+            return '已忘记。'
+        self.agent._run = forget
+        result = await self.agent.chat('a', 'forget my test nickname')
+        self.assertTrue(result['conversation_reset'])
+        self.assertNotEqual(before, self.agent._session('a').conversation_id)
+        self.assertNotIn('test-person-only', str(self.agent.history('a')))
+        self.assertNotIn('test-person-only', str(self.agent.tasks('a')))
+        self.assertEqual(self.agent.store.list_facts(), {})

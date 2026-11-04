@@ -160,7 +160,7 @@ async def recognize(socket: WebSocket):
             await asyncio.gather(*tasks, return_exceptions=True)
         try:
             await socket.close()
-        except RuntimeError:
+        except (RuntimeError, WebSocketDisconnect):
             pass
 
 

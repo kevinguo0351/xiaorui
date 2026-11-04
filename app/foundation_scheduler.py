@@ -13,7 +13,6 @@ class FoundationScheduler:
         self.receipts = self.directory / 'receipts.sqlite3'
         with self._db() as db:
             db.execute('CREATE TABLE IF NOT EXISTS runs (job_id TEXT PRIMARY KEY, status TEXT NOT NULL)')
-            db.execute("UPDATE runs SET status='interrupted' WHERE status='running'")
         self.receipts.chmod(0o600)
         self.maintenance = maintenance
         self.engine = CronService(self.directory / 'jobs.json', on_job=self.dispatch)
@@ -25,6 +24,8 @@ class FoundationScheduler:
     async def start(self):
         if self.running:
             return
+        with self._db() as db:
+            db.execute("UPDATE runs SET status='interrupted' WHERE status='running'")
         await self.engine.start()
         self.engine.store_path.chmod(0o600)
         self.running = True

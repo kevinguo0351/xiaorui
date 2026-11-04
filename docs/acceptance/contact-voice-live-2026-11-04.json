@@ -1,0 +1,21 @@
+{
+  "real_tts_asr": true,
+  "real_model": false,
+  "turns": [
+    {
+      "turn": 1,
+      "transcript": "这是语音通话测试，请只回复你好，不查询服务，不保存资料。",
+      "partial_events": 14,
+      "input_audio_bytes": 46701
+    },
+    {
+      "turn": 2,
+      "transcript": "再补充，我现在只测试连续通话，请简短回答收到。",
+      "partial_events": 9,
+      "input_audio_bytes": 42861
+    }
+  ],
+  "physical_microphone": false,
+  "browser_echo_or_vad_verified": false,
+  "business_writes": false
+}

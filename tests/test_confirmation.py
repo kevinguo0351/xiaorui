@@ -12,6 +12,23 @@ from unittest.mock import patch
 from app.plans import PlanError, PlanStore
 
 
+class PaymentResponseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_official_pay_h5_url_is_returned(self):
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock
+        from app.mcd import McdService
+        service = McdService()
+        call = AsyncMock(return_value={'orderId':'unit-order',
+            'payH5Url':'https://m.mcd.cn/mcp/scanToPay?orderId=unit-order'})
+        @asynccontextmanager
+        async def connection():
+            yield call
+        with patch.object(service, '_connection', connection):
+            result = await service.create_order({'unit':'payload'})
+        self.assertEqual(result['payment_url'], 'https://m.mcd.cn/mcp/scanToPay?orderId=unit-order')
+        self.assertEqual(result['order_id'], 'unit-order')
+
+
 def prepared():
     return {
         'request': {'storeCode': 'unit-test-store', 'items': [{'productCode': 'unit-test-product', 'quantity': 1}],

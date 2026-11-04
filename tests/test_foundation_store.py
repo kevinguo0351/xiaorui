@@ -75,6 +75,12 @@ class FoundationStoreTests(unittest.TestCase):
             restarted.finish_task(first, 'completed')
         self.assertEqual(len(restarted.list_tasks('a')), 2)
 
+    def test_non_owning_open_does_not_interrupt_live_tasks(self):
+        task = self.store.start_task('a', 'unit-thread', 'unit in progress')
+        reader = FoundationStore(self.path, recover_running=False)
+        self.assertEqual(reader.get_task('a', task)['status'], 'running')
+        self.store.finish_task(task, 'completed')
+
     def test_terminal_receipt_is_idempotent_without_result_overwrite(self):
         task = self.store.start_task('a', 'unit-thread', 'unit request')
         self.store.finish_task(task, 'completed', result='first')

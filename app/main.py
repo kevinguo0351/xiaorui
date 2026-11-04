@@ -1,5 +1,7 @@
 """Local chat, voice and confirmation API. Remote writes require exact approval."""
 import os
+import asyncio
+import json
 import secrets
 import time
 from contextlib import asynccontextmanager
@@ -8,7 +10,7 @@ from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from app.mcd import McdService, McdRejectedError
@@ -17,6 +19,9 @@ from app.recommendations import recommend
 from app.voice import router as voice_router
 from app.agent import AgentService, AgentError
 from app.foundation_scheduler import FoundationScheduler
+from app.actions import ActionError
+from app.contact import ContactService
+from app.attachments import ImageStore
 
 ROOT = Path(__file__).resolve().parents[1]
 settings = dotenv_values(ROOT / '.env')
@@ -25,18 +30,25 @@ ORDER_ENABLED = str(os.environ.get('MCD_ORDER_ENABLED', settings.get('MCD_ORDER_
 
 @asynccontextmanager
 async def lifespan(app):
+    plans.recover_interrupted()
+    agent.store.recover_interrupted()
+    agent.actions.recover_interrupted()
+    contact.recover()
     await scheduler.start()
     try:
         yield
     finally:
+        await contact.close()
         await scheduler.stop()
 
 
 app = FastAPI(title='小瑞 · 本地生活助手', docs_url=None, redoc_url=None, lifespan=lifespan)
 app.include_router(voice_router)
 service = McdService()
-plans = PlanStore(ROOT / '.local-data/plans.sqlite3')
+plans = PlanStore(ROOT / '.local-data/plans.sqlite3', recover_running=False)
 agent = AgentService(service, plans)
+images = ImageStore(agent.data_dir / 'images')
+contact = ContactService(agent, agent.data_dir / 'contact.sqlite3', images=images)
 scheduler = FoundationScheduler(agent.data_dir / 'scheduler')
 
 
@@ -71,12 +83,88 @@ async def agent_error(request, error):
     return JSONResponse({'detail': error.message}, status_code=error.status)
 
 
+@app.exception_handler(ActionError)
+async def action_error(request, error):
+    return JSONResponse({'detail':error.message},status_code=error.status)
+
+
+@app.get('/api/actions')
+async def action_list(request: Request):
+    return {'actions':[agent.actions.public(p) for p in agent.actions.list(request.state.owner)]}
+
+
+@app.get('/api/actions/{id}')
+async def action_get(id: str, request: Request):
+    return {'plan':agent.actions.public(agent.actions.get(request.state.owner,id))}
+
+
+@app.post('/api/actions/{id}/cancel-plan')
+async def action_cancel_local(id: str, request: Request):
+    return {'plan':agent.actions.cancel_local(request.state.owner,id)}
+
+
+@app.post('/api/actions/{id}/refresh')
+async def action_refresh(id: str, request: Request):
+    return {'plan':await agent.actions.refresh(request.state.owner,id)}
+
+
 class Body(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
 
 class ChatRequest(Body):
     text: str = Field(min_length=1, max_length=2000, strict=True)
+
+
+class ContactMessage(ChatRequest):
+    client_id: str = Field(min_length=8, max_length=80, pattern=r'^[a-zA-Z0-9_-]+$')
+    image_ids: list[str] = Field(default_factory=list,max_length=4)
+
+
+class ImageUpload(Body):
+    data_url: str = Field(min_length=20,max_length=10_700_000,strict=True)
+
+
+@app.post('/api/contact/images',status_code=201)
+async def upload_image(body: ImageUpload,request: Request):
+    return images.save(request.state.owner,body.data_url)
+
+
+@app.get('/api/contact/images/{image_id}')
+async def read_image(image_id: str,request: Request):
+    return FileResponse(images.resolve(request.state.owner,image_id),media_type='image/jpeg',
+                        headers={'Content-Security-Policy':"default-src 'none'; sandbox"})
+
+
+@app.post('/api/contact/messages', status_code=202)
+async def contact_message(body: ContactMessage, request: Request):
+    return contact.enqueue(request.state.owner, body.text, body.client_id, body.image_ids)
+
+
+@app.get('/api/contact/state')
+async def contact_state(request: Request):
+    return contact.state(request.state.owner)
+
+
+@app.get('/api/contact/events')
+async def contact_events(request: Request, after: int = 0):
+    owner = request.state.owner
+    try:
+        cursor = max(after, int(request.headers.get('last-event-id', '0')))
+    except ValueError:
+        raise HTTPException(422, '消息游标无效。') from None
+    async def stream():
+        nonlocal cursor
+        while not await request.is_disconnected():
+            events = contact.events(owner, cursor)
+            for event in events:
+                cursor = event['cursor']
+                yield f'id: {cursor}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n'
+            if not events:
+                yield ': heartbeat\n\n'
+                await asyncio.sleep(.25)
+    return StreamingResponse(stream(), media_type='text/event-stream',
+                             headers={'X-Accel-Buffering':'no','Cache-Control':'no-store'})
 
 
 @app.post('/api/chat')
@@ -88,7 +176,12 @@ async def chat(body: ChatRequest, request: Request):
 
 @app.post('/api/chat/reset')
 async def reset_chat(body: Body, request: Request):
+    if contact.has_pending(request.state.owner) or (request.state.owner in contact.workers and not contact.workers[request.state.owner].done()):
+        raise HTTPException(409, '消息仍在处理中，请稍后开始新对话。')
     await agent.reset(request.state.owner)
+    with contact.db() as db:
+        db.execute('DELETE FROM events WHERE owner=?', (request.state.owner,))
+        db.execute('DELETE FROM inbox WHERE owner=?', (request.state.owner,))
     return {'ok': True}
 
 
@@ -145,6 +238,17 @@ class Confirmation(Body):
     version: int = Field(ge=1, strict=True)
     confirmation_token: str = Field(min_length=1, max_length=200)
     confirmation_text: str
+
+
+@app.post('/api/actions/{id}/confirm')
+async def action_confirm(id: str, body: Confirmation, request: Request):
+    session = agent._session(request.state.owner)
+    if session.lock.locked():
+        raise HTTPException(409,'小瑞正在处理，请勿重复确认。')
+    async with session.lock:
+        plan = await agent.actions.confirm(request.state.owner,id,body.version,
+            body.confirmation_token,body.confirmation_text)
+    return {'plan':plan,'speech_text':agent.action_text(plan)}
 
 
 async def read_call(fn, *args):

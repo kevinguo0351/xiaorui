@@ -1,0 +1,179 @@
+"""Durable contact inbox. Accept immediately, execute one turn at a time.
+
+Never cancel or replay external writes. Confirmation is bound at arrival to the
+exact visible proposal, and queued messages survive as interrupted on restart.
+"""
+import asyncio
+import json
+import sqlite3
+import time
+from pathlib import Path
+from uuid import uuid4
+
+from app.agent import AgentError
+from app.contact_events import contact_observer, contact_media
+
+CONFIRMATIONS = {'确认叫车', '确认下单', '确认取消'}
+
+
+class ContactService:
+    def __init__(self, agent, path, images=None):
+        self.agent = agent
+        self.images = images
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.workers = {}
+        self.stopping = False
+        with self.db() as db:
+            db.execute('CREATE TABLE IF NOT EXISTS inbox (id TEXT PRIMARY KEY, owner TEXT NOT NULL, client_id TEXT NOT NULL, text TEXT NOT NULL, status TEXT NOT NULL, confirmation TEXT, created REAL, UNIQUE(owner, client_id))')
+            db.execute('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL, payload TEXT NOT NULL)')
+            db.execute('CREATE INDEX IF NOT EXISTS contact_owner ON events(owner, id)')
+            if 'images' not in {r[1] for r in db.execute('PRAGMA table_info(inbox)')}:
+                db.execute("ALTER TABLE inbox ADD COLUMN images TEXT NOT NULL DEFAULT '[]'")
+        self.path.chmod(0o600)
+
+    def db(self):
+        return sqlite3.connect(self.path)
+
+    def emit(self, owner, event):
+        with self.db() as db:
+            cursor = db.execute('INSERT INTO events(owner,payload) VALUES (?,?)', (owner, json.dumps(event, ensure_ascii=False)))
+            return cursor.lastrowid
+
+    def recover(self):
+        with self.db() as db:
+            rows = db.execute("SELECT id,owner FROM inbox WHERE status IN ('queued','running')").fetchall()
+            db.execute("UPDATE inbox SET status='interrupted' WHERE status IN ('queued','running')")
+        for mid, owner in rows:
+            self.emit(owner, {'type': 'failed', 'message_id': mid, 'text': '服务已重启，这条消息未自动重试；请先核对已有结果。'})
+
+    def events(self, owner, after=0):
+        with self.db() as db:
+            return [{'cursor': row[0], **json.loads(row[1])} for row in db.execute(
+                'SELECT id,payload FROM events WHERE owner=? AND id>? ORDER BY id LIMIT 256', (owner, after))]
+
+    def state(self, owner):
+        with self.db() as db:
+            cursor = db.execute('SELECT coalesce(max(id),0) FROM events WHERE owner=?', (owner,)).fetchone()[0]
+            rows = db.execute("SELECT id,payload FROM events WHERE owner=? AND json_extract(payload,'$.type') NOT IN ('delta','progress','started') ORDER BY id DESC LIMIT 160", (owner,)).fetchall()
+            pending = db.execute("SELECT count(*) FROM inbox WHERE owner=? AND status IN ('queued','running')", (owner,)).fetchone()[0]
+        # Token deltas are ephemeral in the UI; replay only authoritative results.
+        return {'events': [{'cursor': r[0], **json.loads(r[1])} for r in reversed(rows)
+                           if json.loads(r[1])['type'] not in {'delta','progress','started'}],
+                'cursor': cursor, 'pending': pending}
+
+    def enqueue(self, owner, text, client_id, image_ids=None):
+        image_ids=image_ids or []
+        if len(image_ids)>4:
+            raise AgentError('每条消息最多发送四张图片。',400)
+        if image_ids:
+            if self.images is None:
+                raise AgentError('图片服务暂时不可用。',503)
+            for mid in image_ids:
+                self.images.resolve(owner,mid)
+        if self.stopping:
+            raise AgentError('服务正在退出，请稍后再发。', 503)
+        if not text.strip() or len(text) > 2000:
+            raise AgentError('请发送 1 到 2000 字的消息。', 400)
+        with self.db() as db:
+            old = db.execute('SELECT id FROM inbox WHERE owner=? AND client_id=?', (owner, client_id)).fetchone()
+            if old:
+                return {'message_id': old[0], 'accepted': True}
+            if db.execute("SELECT count(*) FROM inbox WHERE owner=? AND status IN ('queued','running')", (owner,)).fetchone()[0] >= 20:
+                raise AgentError('待处理消息较多，请稍等片刻。', 429)
+            if sum(not t.done() for t in self.workers.values()) >= 64 and (owner not in self.workers or self.workers[owner].done()):
+                raise AgentError('当前会话较多，请稍后再试。', 429)
+            phrase = text.strip().rstrip('。！!，, ')
+            plan = self.agent.actions.pending(owner) if phrase in CONFIRMATIONS and not image_ids else None
+            confirmation = json.dumps([plan['id'], plan['version']]) if plan else '[]'
+            mid = str(uuid4())
+            db.execute('INSERT INTO inbox (id,owner,client_id,text,status,confirmation,created,images) VALUES (?,?,?,?,?,?,?,?)',
+                       (mid, owner, client_id, text.strip(), 'queued', confirmation, time.time(),json.dumps(image_ids)))
+            db.execute('INSERT INTO events(owner,payload) VALUES (?,?)', (owner, json.dumps(
+                {'type': 'accepted', 'message_id': mid, 'client_id': client_id, 'text': text.strip(),
+                 'images':[{'id':i,'url':f'/api/contact/images/{i}'} for i in image_ids]}, ensure_ascii=False)))
+        # A correction invalidates an old approval immediately, before its turn.
+        if phrase not in CONFIRMATIONS or image_ids:
+            self.invalidate_previous(owner)
+        task = self.workers.get(owner)
+        if task is None or task.done():
+            self.workers = {k:v for k,v in self.workers.items() if not v.done()}
+            self.workers[owner] = asyncio.create_task(self.pump(owner))
+        return {'message_id': mid, 'accepted': True}
+
+    def has_pending(self, owner):
+        with self.db() as db:
+            return bool(db.execute("SELECT 1 FROM inbox WHERE owner=? AND status='queued' LIMIT 1", (owner,)).fetchone())
+
+    def invalidate_previous(self, owner):
+        self.agent.actions.invalidate_pending(owner)
+        session = self.agent._session(owner)
+        plan = self.agent._plan(session, owner)
+        if plan and plan['status'] in {'awaiting_confirmation','needs_review','expired'}:
+            self.agent.plans.cancel(plan['id'], owner)
+
+    async def pump(self, owner):
+        while not self.stopping:
+            # Briefly collect consecutive fragments, keeping confirmations separate.
+            await asyncio.sleep(.35)
+            with self.db() as db:
+                rows = db.execute("SELECT id,text,confirmation,images FROM inbox WHERE owner=? AND status='queued' ORDER BY created,rowid", (owner,)).fetchall()
+                if not rows:
+                    return
+                batch = []
+                for row in rows:
+                    confirm = row[1].rstrip('。！!，, ') in CONFIRMATIONS
+                    if batch and (confirm or json.loads(row[3]) or json.loads(batch[0][3]) or batch[0][1].rstrip('。！!，, ') in CONFIRMATIONS or sum(len(r[1])+1 for r in batch)+len(row[1]) > 2000):
+                        break
+                    batch.append(row)
+                    if confirm:
+                        break
+                for row in batch:
+                    db.execute("UPDATE inbox SET status='running' WHERE id=?", (row[0],))
+            ids = [r[0] for r in batch]
+            run = ids[0]
+            self.emit(owner, {'type': 'started', 'message_id': run, 'message_ids': ids})
+            token = contact_observer.set(lambda event: self.emit(owner, {'message_id': run, **event})
+                                         if not self.has_pending(owner) else None)
+            media_token=contact_media.set(None)
+            try:
+                if self.images:
+                    contact_media.set([self.images.resolve(owner,mid) for r in batch for mid in json.loads(r[3])])
+                # Wait for legacy/card operations rather than racing their lock.
+                session = self.agent._session(owner)
+                while session.lock.locked():
+                    await asyncio.sleep(.05)
+                response = await self.agent.chat(owner, '\n'.join(r[1] for r in batch),
+                                                 expected_confirmation=json.loads(batch[0][2]))
+                stale = self.has_pending(owner)
+                if response.get('conversation_reset'):
+                    with self.db() as db:
+                        db.execute('DELETE FROM events WHERE owner=?', (owner,))
+                        db.execute("DELETE FROM inbox WHERE owner=? AND status NOT IN ('queued','running')", (owner,))
+                if stale:
+                    self.invalidate_previous(owner)
+                self.emit(owner, {'type': 'completed', 'message_id': run, 'message_ids': ids,
+                                  'response': response, 'superseded': stale})
+                status = 'completed'
+            except asyncio.CancelledError:
+                self.emit(owner, {'type': 'failed', 'message_id': run, 'message_ids': ids,
+                                  'text': '处理已中断，请核对已有结果；没有自动重试。'})
+                status = 'interrupted'
+                raise
+            except Exception as exc:
+                status = 'failed'
+                self.emit(owner, {'type': 'failed', 'message_id': run, 'message_ids': ids,
+                                  'text': exc.message if isinstance(exc, AgentError) else '这次处理未完成，请检查连接后重试；已有操作不会自动重放。'})
+            finally:
+                contact_observer.reset(token)
+                contact_media.reset(media_token)
+                with self.db() as db:
+                    for mid in ids:
+                        db.execute('UPDATE inbox SET status=? WHERE id=?', (status, mid))
+
+    async def close(self):
+        self.stopping = True
+        tasks = [t for t in self.workers.values() if not t.done()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

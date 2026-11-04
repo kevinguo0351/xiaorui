@@ -11,7 +11,7 @@ class FoundationStore:
     PROFILE_ID = 'local-user'
     TERMINAL = {'completed', 'failed', 'interrupted', 'cancelled', 'waiting_confirmation', 'unknown'}
 
-    def __init__(self, path):
+    def __init__(self, path, *, recover_running=True):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
@@ -22,12 +22,18 @@ class FoundationStore:
                 CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, owner TEXT NOT NULL, body TEXT NOT NULL);
             ''')
             db.execute('INSERT OR IGNORE INTO profile_meta VALUES (?,0,0)', (self.PROFILE_ID,))
+        if recover_running:
+            self.recover_interrupted()
+        self.path.chmod(0o600)
+
+    def recover_interrupted(self):
+        """Called by the owning application startup, never a read-only import."""
+        with self.connect() as db:
             for row in db.execute('SELECT id,body FROM tasks').fetchall():
                 task = json.loads(row['body'])
                 if task['status'] == 'running':
                     task.update(status='interrupted', error='服务中断，任务未自动重放，请核查后继续。', updated_at=time.time())
                     db.execute('UPDATE tasks SET body=? WHERE id=?', (json.dumps(task, ensure_ascii=False), row['id']))
-        self.path.chmod(0o600)
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=10)

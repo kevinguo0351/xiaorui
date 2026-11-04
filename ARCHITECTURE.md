@@ -1,5 +1,31 @@
 # 架构说明
 
+## 三场景统一执行入口
+
+`app/{didi,mcd,luckin}_scenario.py` 分别管理真实候选和业务规则，`app/actions.py` 管理所有权、SQLite 操作记录、报价比较、确认口令、开关和不可重复执行状态。`prepare()` 仅创建本地方案；模型没有 `confirm()` 或原始写入工具。HTTP 卡片确认和聊天中准确的口头确认由宿主处理，重新核价后才调用适配器 `execute()`。模型上下文剥除确认凭证、原始响应、报价 trace；这些字段不作为对话指令。
+
+```mermaid
+flowchart LR
+  User[老人语音或文字] --> Host[小瑞宿主]
+  Host --> Agent[nanobot 工具规划]
+  Agent --> Domains[滴滴 / 麦当劳 / 瑞幸场景]
+  Domains --> Read[官方查询与核价]
+  Domains --> Proposal[本地待确认方案]
+  Proposal --> User
+  User --> Confirm[宿主核对确认口令或卡片凭证]
+  Confirm --> Gate[开关 / 所有权 / 有效期 / 重核价 / 一次性认领]
+  Gate --> Write[受控官方写操作]
+  Write --> Ledger[SQLite 结果或未知状态]
+  Ledger --> Status[本人状态查询与前台轮询]
+  Status --> User
+```
+
+方案状态包括 awaiting_confirmation、needs_review、rechecking、submitting、created、cancellation_requested、cancelled、expired、superseded、unknown。确认前读取失败只使方案失效；发送写请求后异常保持 unknown，不能自动重试。新会话不会恢复执行中订单；启动时把 submitting 转为 unknown。真实取消仅在平台明确支持且取消费可核实后提案，不能将请求返回误报成最终取消成功。
+
+前端 `ActionCard` 显示具体商品／规格／接送点、金额和确认口令。仅当前有效方案能确认；新问题或候选变化使旧方案失效。当前最新操作在页面打开时每 30 秒查询一次，状态变化和车牌可通过已有 TTS 播报，不播放恢复历史中的旧状态。页面关闭、Mac 休眠后的推送与后台主动通知仍未实现。
+
+新增北京三服务范围：`app/life_services.py` 以官方 MCP SDK 分别接入瑞幸 Bearer Token 与滴滴 MCP Key，动态发现账号工具、按实际 schema 验证请求、只放行查询白名单。`app/service_skills.py` 将门店、饮品与起终点候选绑定到 owner 会话，先查询后选择，旧候选在重新查询失败后失效；会话存储同时持久化这些候选，重置／遗忘时清除。瑞幸和滴滴的交易工具即使在远程目录中可见，也不注册、不执行。凭据仅后端读取，传输日志对已加载凭据脱敏。新增配置不能代表真实权限和支付闭环已完成验收。
+
 本阶段整合 Personal Agent 基础运行时，保留麦当劳交易切片作为回归能力。底座与业务扩展分开验收，不能将上游框架的全部功能视为小瑞已实现能力。
 
 ## 当前模块

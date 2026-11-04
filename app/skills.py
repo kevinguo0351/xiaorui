@@ -10,6 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from app.plans import PlanError
 from app.recommendations import recommend
+from app.service_skills import SERVICE_SCHEMAS
+from app.didi_scenario import SCHEMAS as DIDI_SCHEMAS
+from app.mcd_scenario import SCHEMAS as MCD_SCHEMAS
+from app.luckin_scenario import SCHEMAS as LUCKIN_SCHEMAS
+
+SCENARIO_SCHEMAS = {**DIDI_SCHEMAS, **MCD_SCHEMAS, **LUCKIN_SCHEMAS}
 
 class Arguments(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
@@ -51,8 +57,23 @@ class PersonalProfile(Arguments):
         return self
 
 
-SCHEMAS = {**DINING_SCHEMAS, 'personal_profile': (PersonalProfile,
-    '查看、保存或忘记本人长期资料。只有用户明确要求记住长期事实时才set；今天等临时要求不保存。忘记用forget，不能从旧聊天恢复已删除资料。key用home.address或preferences.drinks等稳定英文键，value是用户原意。')}
+class TaskRecords(Arguments):
+    action: Literal['list', 'get']
+    task_id: str | None = Field(default=None, min_length=1, max_length=128, strict=True)
+
+    @model_validator(mode='after')
+    def action_fields(self):
+        if self.action == 'get' and self.task_id is None:
+            raise ValueError('get requires task_id')
+        if self.action == 'list' and self.task_id is not None:
+            raise ValueError('list takes no task_id')
+        return self
+
+
+SCHEMAS = {**DINING_SCHEMAS, **SERVICE_SCHEMAS, **SCENARIO_SCHEMAS, 'personal_profile': (PersonalProfile,
+    '查看、保存或忘记本人长期资料。只有用户明确要求记住长期事实时才set；今天等临时要求不保存。忘记用forget，不能从旧聊天恢复已删除资料。key用home.address或preferences.drinks等稳定英文键，value是用户原意。'),
+    'task_records': (TaskRecords,
+    '只读查询本人的真实任务台账。list列出近期任务，get按返回的task_id查看详情。只报告实际状态；不执行、重放或取消任务，不能把interrupted说成已恢复完成。')}
 TOOLS = [{'type': 'function', 'function': {'name': name, 'description': description,
           'parameters': schema.model_json_schema()}} for name, (schema, description) in SCHEMAS.items()]
 
@@ -60,8 +81,16 @@ TOOLS = [{'type': 'function', 'function': {'name': name, 'description': descript
 def catalog():
     return [{'id': 'core.personal', 'name': '个人资料', 'tools': ['personal_profile'],
              'enabled': True, 'scope': 'local-profile', 'source': 'skills/core/SKILL.md'},
+            {'id': 'core.tasks', 'name': '任务记录', 'tools': ['task_records'],
+             'enabled': True, 'scope': 'owner', 'source': 'skills/tasks/SKILL.md'},
             {'id': 'dining.mcd', 'name': '麦当劳查询与方案', 'tools': list(DINING_SCHEMAS),
-             'enabled': True, 'scope': 'conversation', 'source': 'skills/dining/SKILL.md'}]
+             'enabled': True, 'scope': 'conversation', 'source': 'skills/dining/SKILL.md'},
+            {'id': 'life.services', 'name': '瑞幸与滴滴查询', 'tools': list(SERVICE_SCHEMAS),
+             'enabled': True, 'scope': 'conversation', 'source': 'skills/services/SKILL.md'},
+            *[{'id':f'life.{provider}', 'name':name, 'tools':list(schemas), 'enabled':True,
+               'scope':'owner-transactions', 'source':f'skills/{provider}/SKILL.md'}
+              for provider,name,schemas in [('didi','滴滴出行',DIDI_SCHEMAS),
+                ('mcd','麦当劳点餐与外送',MCD_SCHEMAS),('luckin','瑞幸饮品',LUCKIN_SCHEMAS)]]]
 
 
 def build_tools(dispatch):
