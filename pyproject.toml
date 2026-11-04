@@ -10,6 +10,9 @@ dependencies = [
   "httpx>=0.28,<1",
   "jsonschema>=4.23,<5",
   "python-dotenv>=1.0,<2",
+  "websockets>=15,<17",
+  "python-socks>=2.7,<3",
+  "nanobot-ai==0.4.0",
 ]
 
 [tool.uv]

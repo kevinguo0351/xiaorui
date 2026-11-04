@@ -1,5 +1,7 @@
 # Personal Agent 专项调研
 
+> 后续复查与当前产品范围纠正见 [Personal Agent 底座复查](personal-agent-reassessment.md)。其中记录 CoPaw／Letta 当前入口变化、现有点餐切片的缺口及建议迁移路径；本文件保留上一轮研究背景。
+
 日期：2026-11-04。研究对象：完整个人助手产品及其可嵌入运行时。
 
 ## 修正上一轮的比较方法

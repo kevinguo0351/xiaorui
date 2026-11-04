@@ -1,7 +1,8 @@
-"""Local confirmation UI API. Remote writes exist only behind exact approval."""
+"""Local chat, voice and confirmation API. Remote writes require exact approval."""
 import os
 import secrets
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -12,13 +13,31 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from app.mcd import McdService, McdRejectedError
 from app.plans import PlanStore, PlanError
+from app.recommendations import recommend
+from app.voice import router as voice_router
+from app.agent import AgentService, AgentError
+from app.foundation_scheduler import FoundationScheduler
 
 ROOT = Path(__file__).resolve().parents[1]
 settings = dotenv_values(ROOT / '.env')
 ORDER_ENABLED = str(os.environ.get('MCD_ORDER_ENABLED', settings.get('MCD_ORDER_ENABLED') or 'false')).lower() == 'true'
-app = FastAPI(title='伴你 · 本地生活助手', docs_url=None, redoc_url=None)
+
+
+@asynccontextmanager
+async def lifespan(app):
+    await scheduler.start()
+    try:
+        yield
+    finally:
+        await scheduler.stop()
+
+
+app = FastAPI(title='小瑞 · 本地生活助手', docs_url=None, redoc_url=None, lifespan=lifespan)
+app.include_router(voice_router)
 service = McdService()
 plans = PlanStore(ROOT / '.local-data/plans.sqlite3')
+agent = AgentService(service, plans)
+scheduler = FoundationScheduler(agent.data_dir / 'scheduler')
 
 
 @app.middleware('http')
@@ -47,8 +66,50 @@ async def plan_error(request, error):
     return JSONResponse({'detail': error.message}, status_code=error.status)
 
 
+@app.exception_handler(AgentError)
+async def agent_error(request, error):
+    return JSONResponse({'detail': error.message}, status_code=error.status)
+
+
 class Body(BaseModel):
     model_config = ConfigDict(extra='forbid')
+
+
+class ChatRequest(Body):
+    text: str = Field(min_length=1, max_length=2000, strict=True)
+
+
+@app.post('/api/chat')
+async def chat(body: ChatRequest, request: Request):
+    if not body.text.strip():
+        raise HTTPException(422, '请先说一句话或输入消息。')
+    return await agent.chat(request.state.owner, body.text.strip())
+
+
+@app.post('/api/chat/reset')
+async def reset_chat(body: Body, request: Request):
+    await agent.reset(request.state.owner)
+    return {'ok': True}
+
+
+@app.get('/api/chat/history')
+async def chat_history(request: Request):
+    return agent.history(request.state.owner)
+
+
+@app.get('/api/foundation')
+async def foundation_status():
+    return {**agent.foundation_status(), 'scheduler': scheduler.status()}
+
+
+@app.get('/api/profile')
+async def personal_profile():
+    return agent.store.profile()
+
+
+@app.get('/api/tasks')
+async def personal_tasks(request: Request):
+    return agent.tasks(request.state.owner)
 
 
 class StoreSearch(Body):
@@ -62,6 +123,11 @@ class StoreChoice(Body):
 
 class ProductChoice(StoreChoice):
     product_code: str = Field(min_length=1, max_length=80)
+
+
+class RecommendationRequest(StoreChoice):
+    budget_cents: int = Field(default=3500, ge=100, le=100000, strict=True)
+    limit: int = Field(default=3, ge=1, le=3, strict=True)
 
 
 class Round(Body):
@@ -95,7 +161,8 @@ async def read_call(fn, *args):
 @app.get('/api/health')
 async def health():
     return {'ok': True, 'order_execution_enabled': ORDER_ENABLED,
-            'mcd_configured': bool(dotenv_values(ROOT / '.env').get('MCD_MCP_TOKEN'))}
+            'mcd_configured': bool(dotenv_values(ROOT / '.env').get('MCD_MCP_TOKEN')),
+            'agent_configured': agent.configured}
 
 
 @app.post('/api/mcd/stores')
@@ -111,6 +178,11 @@ async def menu(body: StoreChoice):
 @app.post('/api/mcd/detail')
 async def detail(body: ProductChoice):
     return {'detail': await read_call(service.detail, body.store_code, body.product_code)}
+
+
+@app.post('/api/mcd/recommendations')
+async def recommendations(body: RecommendationRequest):
+    return await read_call(recommend, service, body.store_code, body.budget_cents, body.limit)
 
 
 @app.post('/api/plans')
