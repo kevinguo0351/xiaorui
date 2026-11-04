@@ -1,0 +1,36 @@
+{
+  "synthetic_cards": true,
+  "real_narrator_requests": true,
+  "business_calls": false,
+  "cases": [
+    {
+      "case": "vehicle_choices",
+      "text": "好的，按您55元的预算看，目前卡片里只有快车在预算内，本次预估52元，实际费用以平台为准。其他选项都超出预算了。您先看看，想选快车或者还想怎么调整，再告诉我就行。",
+      "source": "model",
+      "stage": "choose_vehicle",
+      "elapsed_seconds": 4.07
+    },
+    {
+      "case": "read_aloud",
+      "text": "现在有三种车型可选：快车本次预估52元，优享预估78元，专车预估110元。实际费用都以平台为准。您想选哪一种，告诉我车型就可以。",
+      "source": "model",
+      "stage": "choose_vehicle",
+      "elapsed_seconds": 3.1
+    },
+    {
+      "case": "correction",
+      "text": "好的，咱们先看看，不会帮您叫车。下面卡片里有车型和预估费用，您慢慢比较；想选哪一种，或者需要我念给您听，再告诉我就行。",
+      "source": "model",
+      "stage": "choose_vehicle",
+      "elapsed_seconds": 3.6
+    },
+    {
+      "case": "long_answer",
+      "text": "在家可以挑件轻松的事做，比如听听熟悉的音乐、看看喜欢的书，或者给朋友打个电话聊聊近况。累了就不用勉强，安静歇着也很好，选一件自己愿意做的就行。",
+      "source": "model",
+      "stage": "conversation",
+      "elapsed_seconds": 4.26
+    }
+  ],
+  "all_model_rewrites": true
+}

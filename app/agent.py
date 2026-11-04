@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from app.foundation_store import FoundationStore
 from app.nanobot_runtime import build_runtime, data_context, SYSTEM
+from app.speech import SpeechComposer, context as speech_context, fallback as speech_fallback
 from app.plans import PlanError
 from app.skills import SkillRegistry, SCHEMAS, TOOLS, catalog
 
@@ -32,6 +33,7 @@ class Session:
     meals: list = field(default_factory=list)
     plan_id: str | None = None
     forget_epoch: int = 0
+    speech_turn: dict | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     touched: float = field(default_factory=time.monotonic)
 
@@ -48,6 +50,7 @@ class AgentService:
         self.data_dir.chmod(0o700)
         self.store = store or FoundationStore(self.data_dir / 'foundation.sqlite3')
         self.skills = SkillRegistry(service, plans)
+        self.speech = SpeechComposer()
         self.sessions = OrderedDict()
 
     def _config(self):
@@ -186,10 +189,16 @@ class AgentService:
             raise AgentError('小瑞本次任务尚未完成，请查看已有结果后重试。')
         if not isinstance(result.content, str) or not result.content.strip():
             raise AgentError('小瑞暂时没有生成回复，请重试。')
+        session.speech_turn = await self.speech.compose(
+            self._config(), text, result.content.strip(), events, session.display)
         return result.content.strip()
 
     def _answer(self, owner, session, text, answer, events, trace, task_id):
-        response = {'text': answer, 'speech_text': answer[:1200], 'events': events,
+        spoken = session.speech_turn or speech_fallback(speech_context(text, answer, events, session.display))
+        if any(event.get('type') in {'plan','action_plan'} for event in events):
+            spoken = speech_fallback(speech_context(text, answer, events, session.display))
+        response = {'text': answer, 'speech_text': spoken['text'], 'speech_source': spoken['source'],
+                    'speech_stage': spoken['stage'], 'events': events,
                     'runtime': 'nanobot', 'task_id': task_id, 'trace': trace}
         session.display.extend([{'role': 'user', 'text': text.strip()},
                                 {'role': 'assistant', **copy.deepcopy(response)}])
@@ -207,6 +216,7 @@ class AgentService:
             raise AgentError('小瑞正在回复，请稍等。', 409)
         async with session.lock:
             events, trace = [], []
+            session.speech_turn = None
             task_id = self.store.start_task(owner, session.conversation_id, text)
             try:
                 async with asyncio.timeout(180):
