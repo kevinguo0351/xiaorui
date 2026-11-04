@@ -8,3 +8,9 @@
 /* Keep one typeface and a shared bottom composer in either input mode. */
 :root{--font-ui:"PingFang SC",-apple-system,BlinkMacSystemFont,"Helvetica Neue","Microsoft YaHei",sans-serif;--text-size:20px;font-family:var(--font-ui)}body,button,input,textarea{font-family:var(--font-ui)}.composer textarea,.record-caption,.message-text{font-size:var(--text-size)}.greeting h1,.brand{letter-spacing:0;font-weight:600}.app.empty{padding:0 24px 140px}.empty .welcome{margin:0}.empty .composer-wrap{position:fixed;bottom:0;left:0;right:0;width:auto;max-width:none;padding:24px 24px max(26px,env(safe-area-inset-bottom));background:linear-gradient(transparent,#fff 28%)}.composer-wrap{padding-bottom:max(26px,env(safe-area-inset-bottom))}
 @media(max-width:760px){.app.empty{padding:0 18px 130px}.empty .welcome{margin:0}.empty .composer-wrap,.composer-wrap{padding:20px 12px max(20px,env(safe-area-inset-bottom))}}
+
+/* Keep navigation reachable throughout a long conversation. */
+.app{padding-top:calc(76px + env(safe-area-inset-top,0px))}
+.app>header{position:fixed;top:0;left:0;right:0;z-index:10;max-width:none;height:calc(76px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) 32px 0;background:#fff;border-bottom:1px solid #eef0f1}
+.app.empty{padding-top:calc(76px + env(safe-area-inset-top,0px))}
+@media(max-width:760px){.app,.app.empty{padding-top:calc(66px + env(safe-area-inset-top,0px))}.app>header{height:calc(66px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) 20px 0}}
