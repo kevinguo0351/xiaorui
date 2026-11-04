@@ -5,6 +5,7 @@ import json
 import secrets
 import time
 from contextlib import asynccontextmanager
+from app import read_only
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -13,7 +14,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
-from app.mcd import McdService, McdRejectedError
+from app.mcd import McdService, McdRejectedError, mcd_token
 from app.plans import PlanStore, PlanError
 from app.recommendations import recommend
 from app.voice import router as voice_router
@@ -62,6 +63,9 @@ async def local_boundary(request: Request, call_next):
         return JSONResponse({'detail': '不允许跨来源操作。'}, status_code=403)
     if request.method in {'POST', 'PUT', 'PATCH'} and not request.headers.get('content-type', '').startswith('application/json'):
         return JSONResponse({'detail': '请使用 JSON 请求。'}, status_code=415)
+    if (read_only.READ_ONLY and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'}
+            and request.url.path not in read_only.QUERY_POSTS):
+        return JSONResponse({'detail': read_only.MESSAGE}, status_code=403)
     session = request.cookies.get('pa_session')
     fresh = not session or len(session) < 32 or len(session) > 128
     request.state.owner = secrets.token_urlsafe(32) if fresh else session
@@ -264,8 +268,9 @@ async def read_call(fn, *args):
 
 @app.get('/api/health')
 async def health():
-    return {'ok': True, 'order_execution_enabled': ORDER_ENABLED,
-            'mcd_configured': bool(dotenv_values(ROOT / '.env').get('MCD_MCP_TOKEN')),
+    return {'ok': True, 'order_execution_enabled': ORDER_ENABLED and not read_only.READ_ONLY,
+            'read_only': read_only.READ_ONLY,
+            'mcd_configured': bool(mcd_token()),
             'agent_configured': agent.configured}
 
 
@@ -355,3 +360,8 @@ async def home():
     if not (DIST / 'index.html').exists():
         raise HTTPException(503, '前端尚未构建，请先运行启动脚本。')
     return FileResponse(DIST / 'index.html')
+
+
+# Build with flutter build web --base-href /flutter/. Preserve the React home.
+FLUTTER_DIST = ROOT / 'mobile/build/web'
+app.mount('/flutter', StaticFiles(directory=FLUTTER_DIST, html=True, check_dir=False), name='flutter')

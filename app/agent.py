@@ -7,6 +7,7 @@ import os
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from app import read_only
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -214,8 +215,14 @@ class AgentService:
         return {'tasks': tasks}
 
     async def _tool(self, session, owner, name, arguments, events):
+        if read_only.READ_ONLY and name not in read_only.QUERY_TOOLS:
+            return {'error': read_only.MESSAGE}
         if name in self.scenario_tools:
             result = await self.scenario_tools[name].dispatch(session,owner,name,arguments,events)
+            if name.startswith('mcd_') and name in read_only.QUERY_TOOLS:
+                events.append({'type': 'query_result', 'provider': 'mcd', 'tool': name,
+                               'success': isinstance(result, dict) and 'error' not in result,
+                               'source': 'https://open.mcd.cn/mcp', 'data': model_safe(result)})
             cards=choice_cards(result)
             if cards:
                 events.append({'type':'service_choices','choices':cards})
@@ -269,7 +276,8 @@ class AgentService:
             return result
 
         async def context(request):
-            return [data_context('canonical_profile', self.store.profile()),
+            return [data_context('capability_policy', {'read_only': read_only.READ_ONLY, 'message': read_only.MESSAGE if read_only.READ_ONLY else '依实际工具能力执行'}),
+                    data_context('canonical_profile', self.store.profile()),
                     data_context('service_candidates', model_safe(session.services)),
                     data_context('recent_actions', model_safe([self.actions.public(p) for p in self.actions.list(owner)[:8]])),
                     data_context('current_candidates', {
@@ -335,7 +343,9 @@ class AgentService:
                 async with asyncio.timeout(180):
                     phrase = text.strip().rstrip('。！!，, ')
                     pending_action = self.actions.pending(owner)
-                    if phrase in {'确认叫车','确认下单','确认取消'} and not contact_media.get():
+                    if read_only.READ_ONLY and phrase in {'确认叫车','确认下单','确认取消'}:
+                        answer = read_only.MESSAGE
+                    elif phrase in {'确认叫车','确认下单','确认取消'} and not contact_media.get():
                         if (pending_action is None or phrase != self.actions.phrase(pending_action)
                                 or (expected_confirmation is not None and expected_confirmation != [pending_action['id'], pending_action['version']])):
                             answer = '目前没有对应的待确认方案。请先告诉我具体需求，核对方案后再确认。'

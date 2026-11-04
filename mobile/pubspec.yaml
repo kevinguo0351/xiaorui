@@ -1,0 +1,27 @@
+name: xiaorui_mobile
+description: 小瑞陪伴式语音秘书
+publish_to: none
+version: 0.1.0+1
+environment:
+  sdk: '>=3.10.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.6.0
+  shared_preferences: ^2.5.4
+  record: 7.1.2
+  just_audio: ^0.10.5
+  web_socket_channel: ^3.0.3
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/fonts/LICENSE.txt
+    - assets/fonts/NOTICE.txt
+  fonts:
+    - family: XiaoruiChinese
+      fonts:
+        - asset: assets/fonts/DroidSansFallbackFull.ttf

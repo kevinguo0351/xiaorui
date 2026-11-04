@@ -13,6 +13,7 @@ from nanobot.config.home import set_home_path
 from nanobot.config.schema import Config
 
 from app.skills import SCHEMAS, build_tools
+from app import read_only
 
 logger.disable('nanobot')
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class HostedRegistry(ToolRegistry):
     """Default discovery may instantiate tools, but cannot grant execution access."""
     def register(self, tool):
-        if tool.name in SCHEMAS:
+        if tool.name in SCHEMAS and (not read_only.READ_ONLY or tool.name in read_only.QUERY_TOOLS):
             super().register(tool)
 
 
@@ -55,7 +56,10 @@ def prepare_workspace(directory: Path):
     workspace.mkdir(exist_ok=True)
     workspace.chmod(0o700)
     # Host-owned identity and capability policy are versioned with the application.
-    (workspace / 'AGENTS.md').write_text(SYSTEM, encoding='utf-8')
+    policy = SYSTEM
+    if read_only.READ_ONLY:
+        policy += '\n当前首版强制只读：仅能查询麦当劳门店、菜单和本人记录。不能准备或执行订单、取消、叫车、支付或保存个人资料。查询结果附来源：麦当劳官方 MCP。回复使用短句，每次只问一个主要问题。'
+    (workspace / 'AGENTS.md').write_text(policy, encoding='utf-8')
     (workspace / 'SOUL.md').write_text('名字：小瑞 / xiaorui。简洁、耐心，尊重用户选择。', encoding='utf-8')
     for name in ('core', 'dining', 'tasks', 'services', 'didi', 'mcd', 'luckin'):
         destination = workspace / 'skills' / name
@@ -89,7 +93,8 @@ def build_runtime(settings, directory: Path, dispatch, context_provider):
     loop = AgentLoop.from_config(cfg, tool_registry=registry)
     # Slash-command handlers are an execution path independent of the tool table.
     loop.commands = CommandRouter()
-    if set(registry.tool_names) != set(SCHEMAS):
+    expected = set(SCHEMAS) & read_only.QUERY_TOOLS if read_only.READ_ONLY else set(SCHEMAS)
+    if set(registry.tool_names) != expected:
         raise RuntimeError('Unexpected runtime capability surface')
     bot = Nanobot(loop, config=cfg)
     bot.runtime.add_context_provider(context_provider)

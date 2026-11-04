@@ -27,6 +27,10 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 打开 [小瑞](http://127.0.0.1:8000)。也可双击根目录 `启动.command`；已附带前端构建时可跳过 npm 步骤。默认只允许本机访问，按单进程运行。
 
+## Flutter 陪伴式预览
+
+新增大麦克风、任务板和设置入口，使用独立 Flutter 客户端，复用现有后端。运行 `./scripts/start-flutter.sh --build` 后打开 http://127.0.0.1:8000/flutter/ 。该入口强制只读，原 React 首页保留。配置与验收范围见 [Flutter 预览说明](docs/flutter-preview.md)。
+
 ## 必要配置
 
 凭据只填本机 `.env`，不提交 GitHub。文本与语音需要分别开通服务；配置存在不代表远端权限已通过。
