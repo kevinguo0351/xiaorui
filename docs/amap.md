@@ -10,4 +10,10 @@
 
 官方资料：[地点搜索](https://lbs.amap.com/api/webservice/guide/api/search)、[地理编码](https://lbs.amap.com/api/webservice/guide/api/georegeo)、[路线规划](https://lbs.amap.com/api/webservice/guide/api/newroute)、[天气](https://lbs.amap.com/api/webservice/guide/api/weatherinfo)。
 
-离线测试使用注入的 HTTP／服务响应，仅验证端点、凭据保护、真实候选的参数传递、失败清空候选、单位和报告时间保留，不代替官方真实联调。开发时本地未配置 AMAP_KEY，因此官方查询与真实模型完整流程尚待 Key 配置后验收。
+离线测试使用注入的 HTTP／服务响应，仅验证端点、凭据保护、真实候选的参数传递、失败清空候选、单位和报告时间保留，不代替官方真实联调。
+
+## 真实联调（2026-11-05）
+
+Key 已写入忽略的本地 `.env`，文件权限 0600，不进入 Git。官方只读验收通过：北京西站搜索返回 5 个候选，中国国家博物馆地理编码返回 1 个候选，候选之间驾车路线及北京市天气均返回真实结果。另对公开北京坐标验证步行和驾车均有距离、秒单位耗时及道路指引；结果是当次快照。
+
+隔离工作区中的真实豆包 Agent 对话通过 `amap_weather` 查询北京市天气，并在回复中包含高德报告时间。工具轨迹为 run.started → amap_weather → tool.completed → run.completed；订单数为零。6 项高德专项测试通过。未使用私人位置、未创建订单，未验证持续实时导航或真人语音导航。
