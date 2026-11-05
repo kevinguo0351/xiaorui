@@ -355,10 +355,14 @@ class AgentService:
                             except ActionError as exc:
                                 answer = exc.message
                         trace.append({'type':'host.confirmation'})
-                    elif phrase in {'先不下单','先不叫车','取消方案','先不取消'} and pending_action:
-                        current = self.actions.cancel_local(owner,pending_action['id'])
-                        events.append({'type':'action_plan','plan':current})
-                        answer = '已取消这份待确认方案，没有执行真实交易。'
+                    elif phrase in {'先不下单','先不叫车','取消方案','先不取消','算了','不点了','先不点了','先不新增地址'} and (pending_action or phrase in {'不点了','先不点了'}):
+                        if pending_action:
+                            current = self.actions.cancel_local(owner,pending_action['id'])
+                            events.append({'type':'action_plan','plan':current})
+                        answer = '已取消这份待确认方案，没有执行真实交易。' if pending_action else '好的，这次先不点了。购物车已清空；已经创建的真实订单不会因此取消。'
+                        if phrase in {'算了','不点了','先不点了'}:
+                            session.services.get('mcd',{}).pop('cart',None)
+                            session.services.get('mcd',{}).pop('budget_cents',None)
                     else:
                         # Any changed conversation requires a fresh proposal;
                         # old card capabilities cannot approve a modified plan.

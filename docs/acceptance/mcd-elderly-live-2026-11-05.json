@@ -1,0 +1,20 @@
+{
+  "date": "2026-11-05",
+  "business_writes": false,
+  "cart": {
+    "passed": true,
+    "real_official_reads": true,
+    "item_count": 2,
+    "amount_cents": 3800,
+    "requote_matches": true
+  },
+  "fragmented_address": {
+    "passed": true,
+    "real_model": true
+  },
+  "limits": [
+    "Cart live test used public Beijing pickup, not delivery.",
+    "Address and phone in model test were fictional; no official address was created.",
+    "Prices are snapshots; no payment, cancellation or actual delivery tested."
+  ]
+}

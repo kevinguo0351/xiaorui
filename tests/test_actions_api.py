@@ -93,3 +93,44 @@ class ActionApiTests(unittest.IsolatedAsyncioTestCase):
         result=await self.client.post(url,json=body)
         self.assertEqual(result.json()['plan']['status'],'address_created')
         scenario.execute.assert_awaited_once_with('create_address',request)
+
+    async def test_mcd_cancel_conditions_button_does_not_execute(self):
+        self.agent.actions._update(self.owner,self.plan['id'],status='created',order={'order_id':'ours'})
+        scenario=self.agent.scenarios['mcd']
+        scenario._read=AsyncMock(return_value={'orderDetail':{'canCancel':True,'cancelFee':'0','status':'待支付'}})
+        result=await self.client.post(f'/api/actions/{self.plan["id"]}/prepare-cancel',json={})
+        self.assertEqual(result.status_code,200)
+        self.assertEqual(result.json()['plan']['action'],'cancel')
+        self.assertEqual(result.json()['plan']['confirmation_text'],'确认取消')
+        self.adapter.execute.assert_not_awaited()
+        scenario._read=AsyncMock(return_value={'orderDetail':{'status':'配送中'}})
+        result=await self.client.post(f'/api/actions/{self.plan["id"]}/prepare-cancel',json={})
+        self.assertEqual(result.status_code,409)
+        self.assertIn('取消费用',result.json()['detail'])
+        self.adapter.execute.assert_not_awaited()
+
+    async def test_entire_cart_http_confirm_submits_one_order_once(self):
+        scenario=self.agent.scenarios['mcd']
+        self.agent.actions.register('mcd',scenario)
+        session=self.agent._session(self.owner)
+        session.services['mcd']={'mode':'delivery','selected_store':{'storeCode':'S','beCode':'B','storeName':'测试店'},
+            'selected_address':{'addressId':'A','address':'北京市测试楼','addressDetail':'前台'},
+            'products':[{'code':'P','name':'餐品一'},{'code':'Q','name':'餐品二'}]}
+        async def read(name,args):
+            return {'query-meal-detail':{'rounds':[]},'calculate-price':{'price':3500,'deliveryPrice':600},
+                    'delivery-query-stores':[{'storeCode':'S','beCode':'B','businessStatus':True}]}[name]
+        scenario._read=read
+        scenario.provider.create_order=AsyncMock(return_value={'order_id':'whole-meal'})
+        for index in (1,2):
+            await scenario.dispatch(session,self.owner,'mcd_cart',{'action':'add','product_index':index},[])
+        result=await scenario.dispatch(session,self.owner,'mcd_prepare_cart',{'need_tableware':False,'budget_cents':3500},[])
+        p=result['plan']
+        url=f'/api/actions/{p["id"]}/confirm'
+        body=dict(version=p['version'],confirmation_token=p['confirmation_token'],confirmation_text='确认下单')
+        result=await self.client.post(url,json=body)
+        self.assertEqual(result.status_code,200)
+        self.assertEqual(result.json()['plan']['status'],'created')
+        await self.client.post(url,json=body)
+        scenario.provider.create_order.assert_awaited_once()
+        items=scenario.provider.create_order.call_args.args[0]['items']
+        self.assertEqual([i['productCode'] for i in items],['P','Q'])

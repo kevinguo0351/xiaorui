@@ -72,7 +72,7 @@ export function ActionCard({plan,active,speak,onChange,onPrepared}:{plan:ActionP
   {plan.order?.last_status?.riderNickName&&<p>配送员：{String(plan.order.last_status.riderNickName)}</p>}
   {driver?.carPlate&&<p>车牌：<strong>{driver.carPlate}</strong>{driver.carModel?` · ${driver.carModel}`:''}</p>}
   {plan.order?.order_id&&<button disabled={busy} onClick={()=>void act('refresh')}>{busy?'正在查询…':'查询最新进度'}</button>}
-  {plan.provider==='didi'&&plan.action==='create'&&plan.order?.order_id&&<><button disabled={busy} onClick={()=>void act('prepare-cancel')}>查看取消条件</button><p className="note">这里只查询取消条件，不会直接取消。若无法取得取消费用，请立即到滴滴 App／小程序的进行中订单办理，避免继续等待。</p></>}
+  {['didi','mcd'].includes(plan.provider)&&plan.action==='create'&&plan.order?.order_id&&<><button disabled={busy} onClick={()=>void act('prepare-cancel')}>查看取消条件</button><p className="note">这里只查询取消条件，不会直接取消。若无法取得取消条件或费用，请到对应官方 App／小程序的订单页面核对办理。</p></>}
   {typeof payment==='string'&&payment.startsWith('https://')&&<a className="primary link-button" href={payment} target="_blank" rel="noreferrer">打开官方支付入口 ↗</a>}
   {error&&<p className="error" role="alert">{error}</p>}
  </section>;

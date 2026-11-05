@@ -298,10 +298,12 @@ async def prepare_cancel(id: str, body: Body, request: Request):
         raise HTTPException(409,'小瑞正在处理，请稍后查询取消条件。')
     async with session.lock:
         original=agent.actions.get(owner,id)
-        if original['provider']!='didi' or original['action']!='create':
-            raise HTTPException(409,'请选择本人的真实叫车记录。')
+        if original['provider'] not in {'didi','mcd'} or original['action']!='create':
+            raise HTTPException(409,'请选择本人的真实订单记录。')
         events=[]
-        result=await agent.scenarios['didi'].dispatch(session,owner,'didi_prepare_cancel',{'action_id':id},events)
+        provider=original['provider']
+        parameters={'action_id':id} if provider=='didi' else {'plan_id':id}
+        result=await agent.scenarios[provider].dispatch(session,owner,provider+'_prepare_cancel',parameters,events)
         if result.get('error'):
             raise HTTPException(409,result['error'])
         return {'plan':result['plan'],'speech_text':agent.proposal_text(result['plan'])}

@@ -161,3 +161,38 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('test-person-only', str(self.agent.history('a')))
         self.assertNotIn('test-person-only', str(self.agent.tasks('a')))
         self.assertEqual(self.agent.store.list_facts(), {})
+
+    async def test_elder_says_never_mind_cancels_only_pending_meal_and_clears_cart(self):
+        self.agent._run=AsyncMock(side_effect=AssertionError('local cancellation must not need a model'))
+        session=self.agent._session('a')
+        session.services['mcd']={'cart':[{'product':{'name':'测试餐'}}]}
+        quote={'request':{},'summary':{'product':'测试餐'},'amount_cents':1000,'comparison':{}}
+        plan=self.agent.actions.prepare('a','mcd','create',{},quote)
+        result=await self.agent.chat('a','不点了')
+        self.assertEqual(self.agent.actions.get('a',plan['id'])['status'],'cancelled')
+        self.assertFalse(session.services['mcd'].get('cart'))
+        self.assertIn('没有执行真实交易',result['text'])
+        self.service.create_order.assert_not_awaited()
+
+    async def test_restart_restores_fragmented_address_and_cart_without_mixing_owners(self):
+        session=self.agent._session('a')
+        await self.agent.scenarios['mcd'].dispatch(session,'a','mcd_address_draft',{'city':'北京','address':'测试楼'},[])
+        session.services['mcd']['cart']=[{'product':{'code':'P','name':'测试餐'},'quantity':1,'choices':[]}]
+        self.agent._run=AsyncMock(return_value='还需要确认具体门牌。')
+        await self.agent.chat('a','继续核对')
+        restored=AgentService(self.service,self.plans,data_dir=self.agent.data_dir)
+        state=restored._session('a').services['mcd']
+        self.assertEqual(state['address_draft']['address'],'测试楼')
+        self.assertEqual(state['cart'][0]['product']['code'],'P')
+        self.assertEqual(restored._session('other').services,{})
+        self.service.create_order.assert_not_awaited()
+
+    async def test_no_longer_ordering_clears_cart_before_a_plan_exists(self):
+        self.agent._run=AsyncMock(side_effect=AssertionError('local abandonment must not need a model'))
+        session=self.agent._session('a')
+        session.services['mcd']={'cart':[{'product':{'name':'测试餐'}}],'budget_cents':3500}
+        result=await self.agent.chat('a','不点了')
+        self.assertFalse(session.services['mcd'].get('cart'))
+        self.assertNotIn('budget_cents',session.services['mcd'])
+        self.assertIn('真实订单不会因此取消',result['text'])
+        self.service.create_order.assert_not_awaited()
