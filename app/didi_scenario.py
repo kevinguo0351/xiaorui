@@ -1,5 +1,6 @@
 """Beijing ride workflow. Queries are tools; mutations belong to transaction host."""
 import copy
+import time
 from decimal import Decimal, InvalidOperation
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -123,6 +124,11 @@ class DidiScenario:
         if action != 'create':
             raise ServiceUnavailable('不支持这个操作。')
         data = await self.provider.call('taxi_estimate', request['route'])
+        return self._create_quote(request, data)
+
+    @staticmethod
+    def _create_quote(request, data):
+        request = copy.deepcopy(request)
         if not isinstance(data, dict) or not data.get('traceId'):
             raise ServiceUnavailable('没有取得有效报价凭据，尚未叫车。')
         item = next((i for i in data.get('items', []) if str(i.get('productCategory')) == request['product_category']), None)
@@ -182,13 +188,23 @@ class DidiScenario:
                 data=await self.provider.call('taxi_estimate',route)
                 if not isinstance(data,dict) or not isinstance(data.get('items'),list) or not data['items']:
                     raise ServiceUnavailable('没有可用车型或报价。')
-                state.update(route=route,estimate={'items': copy.deepcopy(data['items'][:10])})
+                state.update(route=route,estimate={
+                    'items': copy.deepcopy(data['items'][:10]),
+                    'traceId': data.get('traceId'), 'from': copy.deepcopy(data.get('from')),
+                    'to': copy.deepcopy(data.get('to')), 'received_at': time.time()})
                 items=[{k:p[k] for k in ('productName','productCategory','priceText','priceDiscounted') if k in p} for p in data['items'][:10]]
                 return {'vehicles':[dict(p,index=i+1) for i,p in enumerate(items)],'actual_places':{k:data.get(k) for k in ('from','to')},'order_created':False,'next':'核对实际接送点与车型；选择后准备确认方案。'}
             if name == 'didi_prepare_ride':
                 selected=choose((state.get('estimate') or {}).get('items'),args.vehicle_index)
                 request={'route':state['route'],'product_category':str(selected['productCategory'])}
-                quote=await self.quote('create',request)
+                # Reuse this turn's recent estimate for the selection card.
+                # Host confirmation still calls quote() for a fresh estimate.
+                cached=state['estimate']
+                age=time.time()-cached.get('received_at',0)
+                if cached.get('traceId') and 0 <= age <= 30:
+                    quote=self._create_quote(request,cached)
+                else:
+                    quote=await self.quote('create',request)
                 plan=self.transactions.prepare(owner,provider='didi',action='create',request=quote['request'],quote=quote)
                 events.append({'type':'action_plan','plan':plan})
                 return {'plan':plan,'order_created':False}

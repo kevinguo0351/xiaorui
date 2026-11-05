@@ -1,0 +1,180 @@
+{
+  "date": "2026-11-05",
+  "live": true,
+  "business_writes": false,
+  "location_scope": "public Beijing test locations; never saved to personal profile",
+  "services": [
+    {
+      "provider": "mcd",
+      "scope": "real-scenario-adapter",
+      "test_location": "public-beijing-landmarks-not-user-location",
+      "steps": [
+        {
+          "tool": "mcd_search_pickup",
+          "ok": true,
+          "stores_count": 5
+        },
+        {
+          "tool": "mcd_menu",
+          "ok": true,
+          "products_count": 2
+        },
+        {
+          "tool": "mcd_product_detail",
+          "ok": true
+        },
+        {
+          "tool": "mcd_prepare_order",
+          "ok": true,
+          "take_ways_count": 2
+        },
+        {
+          "tool": "mcd_prepare_order",
+          "ok": true
+        },
+        {
+          "tool": "host_requote",
+          "ok": true
+        }
+      ],
+      "passed": true,
+      "business_writes": false,
+      "confirmation_card": true,
+      "amount_cents": 2200,
+      "requote_received": true,
+      "requote_unchanged": true,
+      "local_plan_cancelled": true,
+      "checked_at": "2026-11-05T03:34:59.939062+00:00"
+    },
+    {
+      "provider": "luckin",
+      "scope": "real-scenario-adapter",
+      "test_location": "public-beijing-landmarks-not-user-location",
+      "steps": [
+        {
+          "tool": "luckin_search_stores",
+          "ok": true,
+          "stores_count": 1
+        },
+        {
+          "tool": "luckin_search_products",
+          "ok": true,
+          "products_count": 3
+        },
+        {
+          "tool": "luckin_product_detail",
+          "ok": true
+        },
+        {
+          "tool": "luckin_prepare_order",
+          "ok": true
+        }
+      ],
+      "passed": true,
+      "business_writes": false,
+      "confirmation_card": true,
+      "amount_cents": 990,
+      "requote_received": true,
+      "requote_unchanged": true,
+      "local_plan_cancelled": true,
+      "checked_at": "2026-11-05T03:34:16.177401+00:00"
+    },
+    {
+      "provider": "didi",
+      "scope": "real-scenario-adapter",
+      "test_location": "public-beijing-landmarks-not-user-location",
+      "steps": [
+        {
+          "tool": "didi_search_places",
+          "ok": true,
+          "places_count": 5
+        },
+        {
+          "tool": "didi_search_places",
+          "ok": true,
+          "places_count": 5
+        },
+        {
+          "tool": "didi_estimate_ride",
+          "ok": true,
+          "vehicles_count": 7
+        },
+        {
+          "tool": "didi_prepare_ride",
+          "ok": true
+        },
+        {
+          "tool": "host_requote",
+          "ok": true
+        }
+      ],
+      "passed": true,
+      "business_writes": false,
+      "confirmation_card": true,
+      "amount_cents": 2000,
+      "requote_received": true,
+      "requote_unchanged": true,
+      "local_plan_cancelled": true,
+      "checked_at": "2026-11-05T03:39:04.173153+00:00"
+    }
+  ],
+  "mcd_chat_http": {
+    "real_model": true,
+    "production_http_routes": true,
+    "real_mcd_queries": true,
+    "business_writes": false,
+    "test_location": "public-beijing-landmark-not-user-location",
+    "passed": true,
+    "amount_cents": 2200,
+    "confirmation_card_restored": true,
+    "local_plan_cancelled": true,
+    "transport": "httpx ASGITransport invokes production routes in an isolated process; no browser DOM or socket verification",
+    "turns": [
+      {
+        "seconds": 19.0,
+        "tools": [
+          "mcd_search_pickup"
+        ],
+        "events": [
+          "service_choices"
+        ]
+      },
+      {
+        "seconds": 22.72,
+        "tools": [
+          "mcd_menu",
+          "mcd_product_detail"
+        ],
+        "events": [
+          "service_choices"
+        ]
+      },
+      {
+        "seconds": 13.43,
+        "tools": [
+          "mcd_prepare_order"
+        ],
+        "events": [
+          "action_plan"
+        ]
+      }
+    ]
+  },
+  "fixes": [
+    "Configurable proxy policy; local life-service MCP connections use direct transport.",
+    "DiDi selection reuses a quote for at most 30 seconds; host confirmation still re-quotes."
+  ],
+  "prior_failure": {
+    "provider": "didi",
+    "phase": "host_requote",
+    "mcp_code": -32001,
+    "meaning": "rate limited; official API documentation",
+    "reference": "https://mcp.didichuxing.com/api"
+  },
+  "not_verified": [
+    "Real order creation through current chat UI",
+    "Payment or dispatch",
+    "Human voice or browser DOM usability",
+    "Luckin historical unknown create request resolution"
+  ]
+}

@@ -16,6 +16,7 @@ from dotenv import dotenv_values
 from jsonschema import ValidationError, validate
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+from app.service_transport import service_http_client
 
 ROOT = Path(__file__).resolve().parents[1]
 ENDPOINT = 'https://mcp.mcd.cn'
@@ -76,6 +77,7 @@ class McdService:
                 async with streamablehttp_client(
                     ENDPOINT, headers={'Authorization': 'Bearer ' + token},
                     timeout=20, sse_read_timeout=30,
+                    httpx_client_factory=service_http_client,
                 ) as (read, write, _):
                     async with ClientSession(
                         read, write, read_timeout_seconds=timedelta(seconds=30),

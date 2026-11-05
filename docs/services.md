@@ -24,7 +24,9 @@
 
 ## 当前真实证据与缺口
 
-麦当劳真实门店、菜单、核价和北京外带方案通过；广州已有地址的外送含费核价及重新核价通过，未创建配送订单。独立受控实验创建过一笔真实待支付订单并取得官方支付入口，未付款；网页完整交易仍待验收。
+2026-11-05 新一轮[真实接口验收](acceptance/services-live-2026-11-05.json)：三平台生产场景适配器均完成查询、待确认卡片与重新核价；仅用北京公开测试地点，没有创建订单、付款或叫车。滴滴曾在二次核价返回官方限流码 `-32001`；减少选车型时的重复估价后复测通过，正式确认仍重新核价。
+
+麦当劳另通过真实模型调用正式 HTTP 路由的三轮聊天：选店、选麦香鱼单品、生成外带方案，确认卡片可重新读取；测试使用进程内 ASGI 请求，未验证浏览器操作。广州已有地址的外送含费核价及重新核价通过，未创建配送订单。独立受控实验创建过一笔真实待支付订单并取得官方支付入口，未付款；网页完整交易仍待验收。
 
 瑞幸真实查店、饮品、规格切换和预览通过。此前一次创建请求结果未知，用户小程序未看到订单也不足以排除延迟或账号差异；没有可核实订单号时保留保护，不自动重试。
 
@@ -41,9 +43,13 @@
 ```sh
 uv run python experiments/life_services_probe.py luckin
 uv run python experiments/life_services_probe.py didi
+uv run python -m experiments.services_acceptance --live mcd luckin didi
+uv run python -m experiments.mcd_chat_acceptance --live
 uv run python -m experiments.mcd_delivery_acceptance --help
 ```
 
 广州外送实验需由用户选定实际返回地址和候选；历史序号不可复用。账号、地址、支付链接及原始响应只保存在忽略的本地目录。
+
+本机代理无法访问国内官方服务时，可在 `.env` 配置 `LIFE_SERVICES_TRUST_ENV=false` 直连；默认 `true` 沿用环境代理。只影响生活服务 MCP，不改变模型连接，也不会自动重试交易。新验收脚本阻止交易写入，报告存入 `.local-data/`，不能以运行脚本代替真实消费确认。
 
 官方参考：[麦当劳工具目录](https://github.com/M-China/mcd-mcp-server)、[瑞幸 MCP](https://open.lkcoffee.com/mcp)、[滴滴 MCP](https://mcp.didichuxing.com/)。

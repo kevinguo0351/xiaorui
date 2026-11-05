@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import traceback
+import httpx
 from datetime import timedelta
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -16,6 +17,7 @@ from dotenv import dotenv_values
 from jsonschema import validate, ValidationError
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+from app.service_transport import service_http_client
 
 ROOT = Path(__file__).resolve().parents[1]
 SPECS = {
@@ -33,6 +35,26 @@ SPECS = {
 
 class ServiceUnavailable(RuntimeError):
     pass
+
+
+def transport_diagnostic(error):
+    """Return credential-free diagnostics, including nested MCP failures."""
+    pending, kinds, statuses, codes, seen = [error], set(), set(), set(), set()
+    while pending:
+        item = pending.pop()
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        kinds.add(type(item).__name__)
+        code = getattr(getattr(item, 'error', None), 'code', None)
+        if type(code) is int:
+            codes.add(code)
+        if isinstance(item, httpx.HTTPStatusError):
+            statuses.add(item.response.status_code)
+        pending.extend(getattr(item, 'exceptions', ()))
+        if item.__cause__ is not None:
+            pending.append(item.__cause__)
+    return {'error_types': sorted(kinds), 'http_statuses': sorted(statuses), 'mcp_codes': sorted(codes)}
 
 
 class CredentialFilter(logging.Filter):
@@ -88,7 +110,8 @@ class OfficialMcp:
             headers['Authorization'] = 'Bearer ' + credential
         try:
             async with asyncio.timeout(55):
-                async with streamablehttp_client(url, headers=headers, timeout=15, sse_read_timeout=25) as (read, write, _):
+                async with streamablehttp_client(url, headers=headers, timeout=15, sse_read_timeout=25,
+                                                httpx_client_factory=service_http_client) as (read, write, _):
                     async with ClientSession(read, write, read_timeout_seconds=timedelta(seconds=25)) as session:
                         await session.initialize()
                         tools, cursor = {}, None
@@ -105,8 +128,12 @@ class OfficialMcp:
                         yield session, tools
         except ServiceUnavailable:
             raise
-        except Exception:
-            raise ServiceUnavailable(f'{label}连接或查询失败，请检查账号权限、网络和凭据。尚未下单。') from None
+        except Exception as cause:
+            error = ServiceUnavailable(f'{label}连接或查询失败，请检查账号权限、网络和凭据。尚未下单。')
+            error.diagnostic = transport_diagnostic(cause)
+            if self.provider == 'didi' and -32001 in error.diagnostic['mcp_codes']:
+                error.args = ('滴滴查询过于频繁，请稍后重新查询或确认；本次没有自动重试，也不能据此判断已有订单的结果。',)
+            raise error from None
 
     async def discover(self):
         async with self.connection() as (_, tools):

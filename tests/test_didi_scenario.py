@@ -1,4 +1,5 @@
 import unittest
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from app.didi_scenario import DidiScenario
@@ -27,6 +28,29 @@ class DidiScenarioTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('error',result)
         self.provider.call_confirmed.assert_not_awaited()
         self.manager.prepare.assert_not_called()
+
+    async def test_selection_reuses_recent_estimate_but_confirmation_quote_is_fresh(self):
+        cached=dict(estimate('cached'),received_at=time.time())
+        self.session.services={'didi':{'route':self.request['route'],'estimate':cached}}
+        result=await self.dispatch('didi_prepare_ride',{'vehicle_index':1})
+        self.assertIn('plan',result)
+        self.provider.call.assert_not_awaited()
+        request=self.manager.prepare.call_args.kwargs['request']
+        self.assertEqual(request['estimate_trace_id'],'cached')
+        self.provider.call.return_value=estimate('fresh')
+        fresh=await self.scenario.quote('create',request)
+        self.provider.call.assert_awaited_once_with('taxi_estimate',self.request['route'])
+        self.assertEqual(fresh['request']['estimate_trace_id'],'fresh')
+        self.provider.call_confirmed.assert_not_awaited()
+
+    async def test_old_selection_estimate_is_not_reused(self):
+        self.session.services={'didi':{'route':self.request['route'],
+            'estimate':dict(estimate('old'),received_at=time.time()-31)}}
+        self.provider.call.return_value=estimate('new')
+        result=await self.dispatch('didi_prepare_ride',{'vehicle_index':1})
+        self.assertIn('plan',result)
+        self.provider.call.assert_awaited_once()
+        self.assertEqual(self.manager.prepare.call_args.kwargs['request']['estimate_trace_id'],'new')
 
     async def test_quote_trace_refresh_does_not_change_comparison_but_price_does(self):
         self.provider.call.side_effect=[estimate('one'),estimate('two'),estimate('three','53')]
