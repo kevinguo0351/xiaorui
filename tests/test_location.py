@@ -39,8 +39,10 @@ class LocationTests(unittest.IsolatedAsyncioTestCase):
         store=LocationStore();provider=SimpleNamespace(call=AsyncMock())
         tool=DidiScenario(Mock(),provider,store.get)
         session=SimpleNamespace(services={})
-        result=await tool.dispatch(session,'a','didi_current_location',{},[])
+        events=[]
+        result=await tool.dispatch(session,'a','didi_current_location',{},events)
         self.assertIn('error',result)
+        self.assertEqual(events,[{'type':'location_request'}])
         store.put('a',point())
         result=await tool.dispatch(session,'a','didi_current_location',{},[])
         self.assertEqual(result['accuracy_meters'],20)

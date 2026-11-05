@@ -175,6 +175,7 @@ class DidiScenario:
             if name == 'didi_current_location':
                 point=self.location_provider(owner) if self.location_provider else None
                 if not point:
+                    events.append({'type':'location_request'})
                     return {'error':'没有当前有效定位，请点击定位授权，或说出附近地标。'}
                 if not (115.4<=point['longitude']<=117.6 and 39.4<=point['latitude']<=41.1):
                     return {'error':'定位不在北京附近，当前叫车仅支持北京。请提供北京起点地标，不能假装在北京。'}
