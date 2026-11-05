@@ -53,3 +53,9 @@ uv run python -m experiments.mcd_delivery_acceptance --help
 本机代理无法访问国内官方服务时，可在 `.env` 配置 `LIFE_SERVICES_TRUST_ENV=false` 直连；默认 `true` 沿用环境代理。只影响生活服务 MCP，不改变模型连接，也不会自动重试交易。新验收脚本阻止交易写入，报告存入 `.local-data/`，不能以运行脚本代替真实消费确认。
 
 官方参考：[麦当劳工具目录](https://github.com/M-China/mcd-mcp-server)、[瑞幸 MCP](https://open.lkcoffee.com/mcp)、[滴滴 MCP](https://mcp.didichuxing.com/)。
+
+## 滴滴取消入口（2026-11-05）
+
+真实叫车记录现在提供“查看取消条件”，使用本人记录 ID 调用 `/api/actions/{id}/prepare-cancel`，不依赖模型猜测订单。接口只查询并准备方案，不直接调用取消；费用已明确后仍需“确认取消”。其他用户记录不可访问，明确不可取消时即使取消费为零也拒绝准备。失败提示会显示并播报。
+
+官方当前工具目录提供 `taxi_cancel_order(order_id, reason?)`，没有独立取消费预查询工具；本次订单查询遇到限流，不能凭旧状态或缺失费用断定免费取消。费用未知时继续要求到滴滴 App／小程序进行中订单办理。卡片的“取消这个方案”仅放弃未提交方案，与取消真实行程不同。查条件不代表取消成功，真实取消执行和取消费仍需单独验收。本次修复没有实际取消、重复叫车或扣款。

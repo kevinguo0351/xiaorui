@@ -72,6 +72,14 @@ class DidiScenarioTests(unittest.IsolatedAsyncioTestCase):
         self.manager.prepare.assert_not_called()
         self.provider.call_confirmed.assert_not_awaited()
 
+    async def test_explicit_cancellation_ineligibility_overrides_zero_fee(self):
+        self.manager.get.return_value={'provider':'didi','action':'create','order':{'order_id':'unit'}}
+        self.provider.call.return_value={'statusCode':1,'canCancel':False,'cancelFee':0}
+        result=await self.dispatch('didi_prepare_cancel',{'action_id':'local'})
+        self.assertIn('不可取消',result['error'])
+        self.manager.prepare.assert_not_called()
+        self.provider.call_confirmed.assert_not_awaited()
+
     async def test_foreign_record_cannot_query_provider(self):
         self.manager.get.side_effect=ValueError('not owner')
         result=await self.dispatch('didi_query_ride',{'action_id':'foreign'})

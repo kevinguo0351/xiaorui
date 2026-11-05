@@ -290,6 +290,23 @@ class Confirmation(Body):
     confirmation_text: str
 
 
+@app.post('/api/actions/{id}/prepare-cancel')
+async def prepare_cancel(id: str, body: Body, request: Request):
+    owner=request.state.owner
+    session=agent._session(owner)
+    if session.lock.locked():
+        raise HTTPException(409,'小瑞正在处理，请稍后查询取消条件。')
+    async with session.lock:
+        original=agent.actions.get(owner,id)
+        if original['provider']!='didi' or original['action']!='create':
+            raise HTTPException(409,'请选择本人的真实叫车记录。')
+        events=[]
+        result=await agent.scenarios['didi'].dispatch(session,owner,'didi_prepare_cancel',{'action_id':id},events)
+        if result.get('error'):
+            raise HTTPException(409,result['error'])
+        return {'plan':result['plan'],'speech_text':agent.proposal_text(result['plan'])}
+
+
 @app.post('/api/actions/{id}/confirm')
 async def action_confirm(id: str, body: Confirmation, request: Request):
     session = agent._session(request.state.owner)

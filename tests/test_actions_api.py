@@ -49,3 +49,28 @@ class ActionApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.json()['plan']['status'],'created')
         self.assertEqual(second.json()['plan']['status'],'created')
         self.adapter.execute.assert_awaited_once()
+
+    async def test_cancel_conditions_owner_bound_and_never_submit(self):
+        plan=self.agent.actions.prepare(self.owner,'didi','create',{},self.quote)
+        scenario=self.agent.scenarios['didi']
+        scenario.dispatch=AsyncMock(return_value={'error':'平台未返回明确取消费，请到滴滴官方订单页核对。'})
+        url=f'/api/actions/{plan["id"]}/prepare-cancel'
+        result=await self.client.post(url,json={})
+        self.assertEqual(result.status_code,409)
+        self.assertIn('取消费',result.json()['detail'])
+        scenario.dispatch.assert_awaited_once()
+        scenario.dispatch.reset_mock()
+        self.client.cookies.clear()
+        self.assertEqual((await self.client.post(url,json={})).status_code,404)
+        scenario.dispatch.assert_not_awaited()
+
+    async def test_cancel_conditions_return_proposal_not_execution(self):
+        plan=self.agent.actions.prepare(self.owner,'didi','create',{},self.quote)
+        proposal=self.agent.actions.prepare(self.owner,'didi','cancel',{},self.quote)
+        scenario=self.agent.scenarios['didi']
+        scenario.dispatch=AsyncMock(return_value={'plan':proposal})
+        result=await self.client.post(f'/api/actions/{plan["id"]}/prepare-cancel',json={})
+        self.assertEqual(result.status_code,200)
+        self.assertEqual(result.json()['plan']['confirmation_text'],'确认取消')
+        self.assertEqual(result.json()['plan']['status'],'awaiting_confirmation')
+        self.adapter.execute.assert_not_awaited()

@@ -30,15 +30,15 @@ function progressKey(p:ActionPlan){
  const s=p.order?.last_status;
  return [statusText(p),s?.driver?.carPlate,s?.expectDeliveryTime,s?.riderNickName].filter(Boolean).join('|');
 }
-export function ActionCard({plan,active,speak,onChange}:{plan:ActionPlan;active:boolean;speak:(s:string)=>void;onChange:(p:ActionPlan)=>void}){
+export function ActionCard({plan,active,speak,onChange,onPrepared}:{plan:ActionPlan;active:boolean;speak:(s:string)=>void;onChange:(p:ActionPlan)=>void;onPrepared?:(p:ActionPlan)=>void}){
  const [busy,setBusy]=useState(false),[error,setError]=useState('');
  const previous=useRef(progressKey(plan));
  const review=['awaiting_confirmation','needs_review'].includes(plan.status);
  const expired=plan.expires_at*1000<=Date.now();
  async function act(suffix:string,body:unknown={},announce=true){
-  if(busy)return;setBusy(true);setError('');try{const result=await request(plan.id,suffix,body);onChange(result.plan);
+  if(busy)return;setBusy(true);setError('');try{const result=await request(plan.id,suffix,body);if(suffix==='prepare-cancel')onPrepared?.(result.plan);else onChange(result.plan);
    if(announce&&result.speech_text)speak(result.speech_text);
-  }catch(e){setError(e instanceof Error?e.message:'暂时无法查询。')}finally{setBusy(false)}
+  }catch(e){const text=e instanceof Error?e.message:'暂时无法查询。';setError(text);if(announce)speak(text);}finally{setBusy(false)}
  }
  useEffect(()=>{
   const text=statusText(plan),driver=plan.order?.last_status?.driver;
@@ -60,7 +60,7 @@ export function ActionCard({plan,active,speak,onChange}:{plan:ActionPlan;active:
    return label&&text?<div key={key}><dt>{label}</dt><dd>{text}</dd></div>:null;
   })}</dl>
   <div className="total"><span>{plan.action==='cancel'?'取消费用':plan.provider==='didi'?'本次预估费用':'本次总价'}</span><strong>¥{(plan.amount_cents/100).toFixed(2)}</strong></div>
-  {plan.provider==='didi'&&review&&<p className="note">确认后会真实叫车，关联账号可能免密扣款。请核对实际接送点，最终车费以平台为准。</p>}
+  {plan.provider==='didi'&&plan.action==='create'&&review&&<p className="note">确认后会真实叫车，关联账号可能免密扣款。请核对实际接送点，最终车费以平台为准。</p>}
   {plan.error&&<p className="note">{plan.error}</p>}
   {review&&!plan.execution_enabled&&<p className="note">家人尚未开启这项真实订单执行。</p>}
   {review&&active&&<div className="card-actions"><button className="primary" disabled={busy||expired||!plan.execution_enabled} onClick={()=>void act('confirm',{version:plan.version,confirmation_token:plan.confirmation_token,confirmation_text:plan.confirmation_text})}>{plan.confirmation_text}</button><button disabled={busy} onClick={()=>void act('cancel-plan')}>取消这个方案</button></div>}
@@ -71,6 +71,7 @@ export function ActionCard({plan,active,speak,onChange}:{plan:ActionPlan;active:
   {plan.order?.last_status?.riderNickName&&<p>配送员：{String(plan.order.last_status.riderNickName)}</p>}
   {driver?.carPlate&&<p>车牌：<strong>{driver.carPlate}</strong>{driver.carModel?` · ${driver.carModel}`:''}</p>}
   {plan.order?.order_id&&<button disabled={busy} onClick={()=>void act('refresh')}>{busy?'正在查询…':'查询最新进度'}</button>}
+  {plan.provider==='didi'&&plan.action==='create'&&plan.order?.order_id&&<><button disabled={busy} onClick={()=>void act('prepare-cancel')}>查看取消条件</button><p className="note">这里只查询取消条件，不会直接取消。若无法取得取消费用，请立即到滴滴 App／小程序的进行中订单办理，避免继续等待。</p></>}
   {typeof payment==='string'&&payment.startsWith('https://')&&<a className="primary link-button" href={payment} target="_blank" rel="noreferrer">打开官方支付入口 ↗</a>}
   {error&&<p className="error" role="alert">{error}</p>}
  </section>;

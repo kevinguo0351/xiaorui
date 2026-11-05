@@ -82,7 +82,7 @@ def choose(items, index):
 def clean_order(data):
     if not isinstance(data, dict):
         raise ServiceUnavailable('订单结果格式异常，不能判断车辆状态。')
-    result = {k: data[k] for k in ('statusCode','statusText','status','from','to','cancelFee','cancelFeeCents') if k in data}
+    result = {k: data[k] for k in ('statusCode','statusText','status','from','to','cancelFee','cancelFeeCents','canCancel') if k in data}
     driver = data.get('driver')
     if isinstance(driver, dict):
         result['driver'] = {k:driver[k] for k in ('name','carModel','carPlate') if k in driver}
@@ -112,6 +112,8 @@ class DidiScenario:
         request = copy.deepcopy(request)
         if action == 'cancel':
             data = clean_order(await self.provider.call('taxi_query_order', {'order_id':request['order_id']}))
+            if data.get('canCancel') is False:
+                raise ServiceUnavailable('平台表示当前订单不可取消，请到滴滴官方订单页核对状态。')
             if str(data.get('statusCode')) in {'4','5'}:
                 raise ServiceUnavailable('行程中或已完成的订单不能取消。')
             if 'cancelFeeCents' in data:
