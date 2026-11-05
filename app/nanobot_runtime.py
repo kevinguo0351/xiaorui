@@ -64,10 +64,10 @@ def prepare_workspace(directory: Path):
     # Host-owned identity and capability policy are versioned with the application.
     policy = SYSTEM
     if read_only.READ_ONLY:
-        policy += '\n当前首版强制只读：仅能查询麦当劳门店、菜单和本人记录。不能准备或执行订单、取消、叫车、支付或保存个人资料。查询结果附来源：麦当劳官方 MCP。回复使用短句，每次只问一个主要问题。'
+        policy += '\n当前首版强制只读：可查询麦当劳门店、菜单、本人记录及高德地点、地址、路线和天气。不能准备或执行订单、取消、叫车、支付或保存个人资料。查询结果注明实际来源（麦当劳官方 MCP 或高德官方 API）。回复使用短句，每次只问一个主要问题。'
     (workspace / 'AGENTS.md').write_text(policy, encoding='utf-8')
     (workspace / 'SOUL.md').write_text('名字：小瑞 / xiaorui。简洁、耐心，尊重用户选择。', encoding='utf-8')
-    for name in ('core', 'dining', 'tasks', 'services', 'didi', 'mcd', 'luckin'):
+    for name in ('core', 'dining', 'tasks', 'services', 'didi', 'mcd', 'luckin', 'amap'):
         destination = workspace / 'skills' / name
         destination.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / 'skills' / name / 'SKILL.md', destination / 'SKILL.md')

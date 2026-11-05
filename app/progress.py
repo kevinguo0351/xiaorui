@@ -1,6 +1,10 @@
 """Human-readable progress from actual host operations, never model guesses."""
 
 TOOL_ACTIVITY = {
+    'amap_search_places':'正在用高德查询地点',
+    'amap_geocode':'正在用高德核对地址',
+    'amap_route':'正在用高德查询路线和预计耗时',
+    'amap_weather':'正在查询高德天气和报告时间',
     'didi_current_location': '正在读取本轮授权定位，请核对上车位置',
     'mcd_current_location': '正在读取本轮授权定位，请核对配送位置',
     'mcd_address_draft': '正在整理配送地址草稿，还没有保存地址',

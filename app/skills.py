@@ -14,6 +14,7 @@ from app.service_skills import SERVICE_SCHEMAS
 from app.didi_scenario import SCHEMAS as DIDI_SCHEMAS
 from app.mcd_scenario import SCHEMAS as MCD_SCHEMAS
 from app.luckin_scenario import SCHEMAS as LUCKIN_SCHEMAS
+from app.amap import SCHEMAS as AMAP_SCHEMAS
 
 SCENARIO_SCHEMAS = {**DIDI_SCHEMAS, **MCD_SCHEMAS, **LUCKIN_SCHEMAS}
 
@@ -70,7 +71,7 @@ class TaskRecords(Arguments):
         return self
 
 
-SCHEMAS = {**DINING_SCHEMAS, **SERVICE_SCHEMAS, **SCENARIO_SCHEMAS, 'personal_profile': (PersonalProfile,
+SCHEMAS = {**DINING_SCHEMAS, **SERVICE_SCHEMAS, **SCENARIO_SCHEMAS, **AMAP_SCHEMAS, 'personal_profile': (PersonalProfile,
     '查看、保存或忘记本人长期资料。只有用户明确要求记住长期事实时才set；今天等临时要求不保存。忘记用forget，不能从旧聊天恢复已删除资料。key用home.address或preferences.drinks等稳定英文键，value是用户原意。'),
     'task_records': (TaskRecords,
     '只读查询本人的真实任务台账。list列出近期任务，get按返回的task_id查看详情。只报告实际状态；不执行、重放或取消任务，不能把interrupted说成已恢复完成。')}
@@ -79,7 +80,8 @@ TOOLS = [{'type': 'function', 'function': {'name': name, 'description': descript
 
 
 def catalog():
-    return [{'id': 'core.personal', 'name': '个人资料', 'tools': ['personal_profile'],
+    return [{'id':'maps.amap','name':'高德地图查询','tools':list(AMAP_SCHEMAS),'enabled':True,'scope':'conversation','source':'skills/amap/SKILL.md'},
+            {'id': 'core.personal', 'name': '个人资料', 'tools': ['personal_profile'],
              'enabled': True, 'scope': 'local-profile', 'source': 'skills/core/SKILL.md'},
             {'id': 'core.tasks', 'name': '任务记录', 'tools': ['task_records'],
              'enabled': True, 'scope': 'owner', 'source': 'skills/tasks/SKILL.md'},

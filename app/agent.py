@@ -8,6 +8,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from app import read_only
+from app.amap import Amap, SCHEMAS as AMAP_SCHEMAS, configured as amap_configured
 from app.progress import tool_activity
 from pathlib import Path
 
@@ -116,6 +117,7 @@ class AgentService:
         self.actions = ActionManager(self.data_dir / 'actions.sqlite3',
                                      external_blocks=external_block if data_dir is None else None)
         self.locations = LocationStore()
+        self.amap = Amap()
         self.scenarios = {
             'didi':DidiScenario(self.actions, self.life_skills.didi, self.locations.get),
             'mcd':McdScenario(self.actions, service, self.locations.get, self.life_skills.didi),
@@ -201,6 +203,7 @@ class AgentService:
 
     def foundation_status(self):
         return {'runtime': 'nanobot', 'runtime_version': '0.4.0',
+                'amap':{'configured':amap_configured(),'query_only':True},
                 'profile_id': self.store.PROFILE_ID, 'session_storage': 'persistent',
                 'skills': catalog(), 'tools': list(SCHEMAS),
                 'business_expansion': 'beijing-luckin-mcd-didi',
@@ -221,6 +224,8 @@ class AgentService:
     async def _tool(self, session, owner, name, arguments, events):
         if read_only.READ_ONLY and name not in read_only.QUERY_TOOLS:
             return {'error': read_only.MESSAGE}
+        if name in AMAP_SCHEMAS:
+            return await self.amap.dispatch(session,name,arguments)
         if name in self.scenario_tools:
             result = await self.scenario_tools[name].dispatch(session,owner,name,arguments,events)
             if name.startswith('mcd_') and name in read_only.QUERY_TOOLS:
