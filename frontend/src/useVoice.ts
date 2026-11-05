@@ -5,14 +5,20 @@ const processor=`class PCM extends AudioWorkletProcessor {
  constructor(){super();this.phase=0;this.sum=0;this.count=0;this.buffer=[];this.power=0;this.n=0;this.port.onmessage=e=>{if(e.data==='flush'){if(this.buffer.length){const b=new ArrayBuffer(this.buffer.length*2),d=new DataView(b);this.buffer.forEach((v,i)=>d.setInt16(i*2,v,true));this.port.postMessage(b,[b]);this.buffer=[];}this.port.postMessage('flushed');}};}
  process(inputs){const a=inputs[0]?.[0];if(!a)return true;for(const x of a){this.power+=x*x;this.n++;if(this.n>=sampleRate*.02){this.port.postMessage({level:Math.sqrt(this.power/this.n)});this.power=0;this.n=0;}this.sum+=x;this.count++;this.phase+=16000;if(this.phase>=sampleRate){this.phase-=sampleRate;const v=Math.max(-1,Math.min(1,this.sum/this.count));this.buffer.push(Math.round(v*(v<0?32768:32767)));this.sum=0;this.count=0;if(this.buffer.length===3200){const b=new ArrayBuffer(6400),d=new DataView(b);this.buffer.forEach((v,i)=>d.setInt16(i*2,v,true));this.port.postMessage(b,[b]);this.buffer=[];}}}return true;}
 }registerProcessor('xiaorui-pcm',PCM);`;
+// Completed sentences can finish sooner; hesitation and confirmations retain room.
+export function silenceDelay(text:string){
+ const value=text.trim();
+ if(!value||/确认(?:叫车|下单|取消)|(?:然后|还有|那个|这个|就是|我想|但是|或者|嗯|呃)[，,、\s]*$/.test(value))return 1800;
+ return /[。！？!?]$/.test(value)?900:1200;
+}
 type Turn={socket:WebSocket;ready:boolean;closing:boolean;pending:ArrayBuffer[];lastText:string;timeout?:ReturnType<typeof setTimeout>;limit?:ReturnType<typeof setTimeout>};
 export function useVoice(onFinal:(text:string)=>void,onError:(text:string)=>void,onSpeechStart:()=>void=()=>{}){
  const [status,setStatus]=useState<Status>();const [phase,setPhase]=useState<'idle'|'connecting'|'listening'|'finishing'>('idle');const [transcript,setTranscript]=useState('');const [speaking,setSpeaking]=useState(false);const [loadingSpeech,setLoadingSpeech]=useState(false);const [inCall,setInCall]=useState(false);const [recording,setRecording]=useState(false);const captureMode=useRef<'call'|'message'>('call');const finishRequested=useRef(false);
  const handlers=useRef({onFinal,onError,onSpeechStart});handlers.current={onFinal,onError,onSpeechStart};
  const active=useRef(false),mounted=useRef(true),generation=useRef(0),media=useRef<MediaStream|undefined>(undefined),ctx=useRef<AudioContext|undefined>(undefined),node=useRef<AudioWorkletNode|undefined>(undefined),turn=useRef<Turn|undefined>(undefined);
  const pre=useRef<ArrayBuffer[]>([]),next=useRef<ArrayBuffer[]>([]),talking=useRef(false),lastLoud=useRef(0),loudFrames=useRef(0),ticker=useRef<ReturnType<typeof setInterval>|undefined>(undefined);
- const player=useRef<HTMLAudioElement|undefined>(undefined),audioUrl=useRef(''),speechAbort=useRef<AbortController|undefined>(undefined),speechGeneration=useRef(0);
- function stopSpeech(){speechGeneration.current++;speechAbort.current?.abort();speechAbort.current=undefined;const p=player.current;if(p){p.pause();p.dispatchEvent(new Event('ended'));}player.current=undefined;if(audioUrl.current)URL.revokeObjectURL(audioUrl.current);audioUrl.current='';if(mounted.current){setSpeaking(false);setLoadingSpeech(false);}}
+ const player=useRef<HTMLAudioElement|undefined>(undefined),speechAbort=useRef<AbortController|undefined>(undefined),speechGeneration=useRef(0);
+ function stopSpeech(){speechGeneration.current++;speechAbort.current?.abort();speechAbort.current=undefined;const p=player.current;if(p){p.pause();p.removeAttribute('src');p.load();p.dispatchEvent(new Event('ended'));}player.current=undefined;if(mounted.current){setSpeaking(false);setLoadingSpeech(false);}}
  function dispose(t:Turn){clearTimeout(t.timeout);clearTimeout(t.limit);t.socket.onclose=null;t.socket.onerror=null;t.socket.onmessage=null;t.socket.close();}
  function endCall(){active.current=false;generation.current++;clearInterval(ticker.current);const t=turn.current;turn.current=undefined;if(t)dispose(t);node.current?.disconnect();node.current=undefined;media.current?.getTracks().forEach(t=>t.stop());media.current=undefined;void ctx.current?.close().catch(()=>{});ctx.current=undefined;pre.current=[];next.current=[];talking.current=false;stopSpeech();if(mounted.current){setInCall(false);setRecording(false);setPhase('idle');setTranscript('');}}
  function fail(message:string){endCall();handlers.current.onError(message);}
@@ -29,16 +35,30 @@ export function useVoice(onFinal:(text:string)=>void,onError:(text:string)=>void
  const worklet=new AudioWorkletNode(context,'xiaorui-pcm');node.current=worklet;const source=context.createMediaStreamSource(stream),mute=context.createGain();mute.gain.value=0;source.connect(worklet);worklet.connect(mute);mute.connect(context.destination);
  worklet.port.onmessage=e=>{if(!active.current||id!==generation.current)return;if(e.data==='flushed'){finishRequested.current=true;finishTurn();return;}if(!(e.data instanceof ArrayBuffer)){if(e.data.level>.018){lastLoud.current=Date.now();loudFrames.current++;if(loudFrames.current>=6&&!talking.current){talking.current=true;stopSpeech();handlers.current.onSpeechStart();}}else loudFrames.current=0;return;}
  const b=e.data as ArrayBuffer;const t=turn.current;if(t&&!t.closing){if(t.ready){if(t.socket.bufferedAmount>256000){fail('网络暂时跟不上通话，请重新接通。');return;}t.socket.send(b);}else{t.pending.push(b);if(t.pending.length>40)fail('语音连接过慢，请重新接通。');}}else if(t?.closing){if(talking.current){next.current.push(b);if(next.current.length>40)fail('识别等待过久，请重新接通。');}}else{pre.current.push(b);if(pre.current.length>3)pre.current.shift();if(talking.current){const frames=pre.current;pre.current=[];openTurn(frames);}}};
- if(mode==='message')openTurn([]);else ticker.current=setInterval(()=>{if(Date.now()-lastLoud.current>1800){talking.current=false;if(turn.current?.ready&&!turn.current.closing)finishTurn();}},100);setPhase('listening');
+ if(mode==='message')openTurn([]);else ticker.current=setInterval(()=>{if(Date.now()-lastLoud.current>silenceDelay(turn.current?.lastText||'')){talking.current=false;if(turn.current?.ready&&!turn.current.closing)finishTurn();}},100);setPhase('listening');
  }catch(e){if(id!==generation.current)return;fail(e instanceof DOMException&&e.name==='NotAllowedError'?'麦克风未获允许，您仍可以打字。':e instanceof Error?e.message:'无法接通语音。');}}
  function startCall(){if(active.current&&captureMode.current==='call'){endCall();return Promise.resolve();}return startCapture('call');}
  function startRecording(){return startCapture('message');}
  function stopRecording(){if(!active.current||captureMode.current!=='message')return;setPhase('finishing');if(node.current)node.current.port.postMessage('flush');else{finishRequested.current=true;finishTurn();}}
- async function speak(text:string){stopSpeech();const id=speechGeneration.current;const controller=new AbortController();speechAbort.current=controller;
- // Short sentence synthesis: keep first audio short and make interruption immediate.
- const parts=(text.match(/[^。！？!?；;]+[。！？!?；;]?/g)||[text]).flatMap(s=>s.match(/.{1,160}/gs)||[]).slice(0,20);
- try{for(const part of parts){if(id!==speechGeneration.current||controller.signal.aborted)return;setLoadingSpeech(true);const r=await fetch('/api/voice/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:part}),signal:controller.signal});if(!r.ok)throw Error('语音播报暂时不可用，文字消息已保留。');const blob=await r.blob();if(controller.signal.aborted||id!==speechGeneration.current)return;audioUrl.current=URL.createObjectURL(blob);const p=new Audio(audioUrl.current);player.current=p;setLoadingSpeech(false);setSpeaking(true);await new Promise<void>((resolve,reject)=>{p.onended=()=>resolve();p.onerror=()=>reject(Error('音频播放失败，请点击重播。'));void p.play().catch(reject);});URL.revokeObjectURL(audioUrl.current);audioUrl.current='';if(id!==speechGeneration.current)return;}if(id===speechGeneration.current){player.current=undefined;setSpeaking(false);setLoadingSpeech(false);}}
- catch(e){if(controller.signal.aborted||id!==speechGeneration.current)return;stopSpeech();handlers.current.onError(e instanceof DOMException&&e.name==='NotAllowedError'?'浏览器尚未允许播放，请点击消息下方“听小瑞说”。':e instanceof Error?e.message:'语音播放失败。');}}
+ async function speak(text:string){
+ stopSpeech();const id=speechGeneration.current;const controller=new AbortController();speechAbort.current=controller;
+ setLoadingSpeech(true);
+ try{
+  const r=await fetch('/api/voice/tts/prepare',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text}),signal:controller.signal});
+  if(!r.ok)throw Error('语音播报暂时不可用，文字消息已保留。');
+  const data=await r.json();
+  if(controller.signal.aborted||id!==speechGeneration.current)return;
+  if(typeof data.url!=='string'||!/^\/api\/voice\/tts\/stream\/[A-Za-z0-9_-]+$/.test(data.url))throw Error('语音播放地址无效，请重试。');
+  const p=new Audio(data.url);player.current=p;p.preload='auto';
+  await new Promise<void>((resolve,reject)=>{
+   p.onplaying=()=>{if(id===speechGeneration.current){setLoadingSpeech(false);setSpeaking(true);}};
+   p.onended=()=>resolve();p.onerror=()=>reject(Error('语音播放未完成，请点击消息重新播报。'));
+   void p.play().catch(reject);
+  });
+  if(id===speechGeneration.current){p.removeAttribute('src');p.load();player.current=undefined;setSpeaking(false);setLoadingSpeech(false);}
+ }catch(e){if(controller.signal.aborted||id!==speechGeneration.current)return;stopSpeech();handlers.current.onError(e instanceof DOMException&&e.name==='NotAllowedError'?'浏览器尚未允许播放，请点击消息下方“听小瑞说”。':e instanceof Error?e.message:'语音播放失败。');}
+ }
+
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;endCall();};},[]);
  return{status,phase,transcript,speaking,loadingSpeech,inCall,recording,startRecording,stopRecording,cancelRecording:endCall,start:startCall,startCall,endCall,finish:finishTurn,cancel:endCall,speak,stopSpeech};
 }

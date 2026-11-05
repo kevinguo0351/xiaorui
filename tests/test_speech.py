@@ -20,6 +20,14 @@ def ride():
 
 
 class SpeechTests(unittest.IsolatedAsyncioTestCase):
+    async def test_short_conversational_paragraphs_skip_second_model_generation(self):
+        with patch('app.speech.httpx.AsyncClient') as client:
+            result=await SpeechComposer().compose({'model':'test','key':'test','base':'https://test.invalid'},
+                '陪我聊聊','好呀，我陪您。\n\n您想从什么聊起？',[],[])
+        client.assert_not_called()
+        self.assertEqual(result['source'],'brief')
+        self.assertEqual(result['text'],'好呀，我陪您。 您想从什么聊起？')
+
     def test_choice_guidance_is_not_a_readout_of_all_cards(self):
         data=context('帮我看看有哪些车','快车52元，优享78元。',vehicles(),[])
         result=fallback(data)

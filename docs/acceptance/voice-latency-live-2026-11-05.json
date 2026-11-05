@@ -1,0 +1,48 @@
+{
+  "date": "2026-11-05",
+  "synthetic_dialogue": true,
+  "business_writes": false,
+  "profile_loaded": false,
+  "sample_count_per_version": 1,
+  "baseline": {
+    "first_text_seconds": 3.88,
+    "narration_seconds": 4.667,
+    "reply_seconds": 12.128,
+    "answer_chars": 103,
+    "speech_chars": 76,
+    "speech_source": "model",
+    "first_sentence_tts_seconds": 1.45,
+    "audio_bytes": 16557,
+    "server_reply_plus_first_audio_seconds": 13.578
+  },
+  "after": {
+    "checked_at": "2026-11-05T06:05:43.886868+00:00",
+    "synthetic_dialogue": true,
+    "business_writes": false,
+    "human_voice": false,
+    "first_text_seconds": 4.596,
+    "narration_seconds": 0.002,
+    "reply_seconds": 5.157,
+    "answer_chars": 37,
+    "speech_chars": 37,
+    "speech_source": "brief",
+    "first_audio_chunk_seconds": 0.862,
+    "server_reply_plus_first_chunk_seconds": 6.02,
+    "full_audio_seconds": 2.057,
+    "audio_bytes": 64557,
+    "passed": true
+  },
+  "measurement_limits": [
+    "Baseline audio measurement waited for a complete first-sentence MP3; after measurement stops at first validated MP3 chunk of a whole reply.",
+    "No microphone, ASR, 350ms inbox batching or browser audible-onset time included.",
+    "Shorter natural reply is intentional; responses are not equal-length performance workloads.",
+    "Single observations are not a latency guarantee."
+  ],
+  "browser_check": {
+    "isolated_test_data": true,
+    "native_audio_reached_playing": true,
+    "explicit_stop_returned_to_play_button": true,
+    "human_microphone_tested": false
+  },
+  "upstream_reference": "https://docs.volcengine.com/docs/doubao-voice/http-chunked-sse-unidirectional-streaming-v3?lang=zh"
+}
