@@ -35,12 +35,13 @@ class PhoneCallTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.runs,[('电话里说的话',call['id']),('单独文字消息',None)])
         events = self.service.events('a')
         voice = [e for e in events if e.get('call_id')==call['id']]
-        self.assertEqual({e['type'] for e in voice},{'accepted','started','completed'})
-        # A queued correction suppresses obsolete deltas, including across channels.
+        self.assertEqual({e['type'] for e in voice},{'accepted','started','delta','completed'})
+        # A separate text channel must not suppress the phone reply.
         self.service.enqueue('a','第二段通话','call-turn-2',call_id=call['id'])
         await self.service.workers['a']
         self.assertTrue(any(e['type']=='delta' and e.get('call_id')==call['id'] for e in self.service.events('a')))
         completed = next(e for e in voice if e['type']=='completed')
+        self.assertFalse(completed['superseded'])
         self.assertIn('我给您发了',completed['response']['speech_text'])
         self.assertEqual(completed['response']['events'][0]['type'],'meals')
         self.assertIsNone(contact_call.get())

@@ -88,9 +88,9 @@ test('original composer preserves Shift+Enter and IME, with conditional text sen
 });
 
 async function connectPhone(h){h.voice.inCall=false;h.voice.phase='idle';h.render();await h.flush();let tree=h.render();buttonByLabel(tree,'更多功能').props.onClick();tree=h.render();buttonByLabel(tree,'拨打语音电话').props.onClick();await h.flush();return h.render();}
-test('phone hides composer, speaks an opening question and routes spoken turns outside chat bubbles',async()=>{
+test('phone preserves composer, speaks an opening question and routes spoken turns outside chat bubbles',async()=>{
  const h=harness();let tree=await connectPhone(h);
- assert.equal(all(tree,n=>n.type==='textarea').length,0);
+ assert.equal(all(tree,n=>n.type==='textarea').length,1);
  assert.equal(all(tree,n=>n.type?.name==='CallBar').length,1);
  assert.equal(all(tree,n=>n.props?.className==='call-bar').length,0);
  assert.ok(h.spoken.some(text=>text.includes('聊点什么')));
@@ -117,4 +117,37 @@ test('replayed call turns remain hidden and durable call summaries deduplicate',
  h.voice.inCall=false;h.voice.phase='idle';h.render();await h.flush();let tree=h.render();
  assert.equal(all(tree,n=>n.props?.className==='phone-record').length,1);assert.equal(all(tree,n=>n.type==='p'&&n.props.className==='message-text').length,0);
  h.emit({type:'call_ended',call:record});tree=h.render();assert.equal(all(tree,n=>n.props?.className==='phone-record').length,1);assert.deepEqual(h.spoken,[]);
+});
+
+test('each text message owns its progress and completion replaces only that progress',async()=>{
+ const h=harness();h.voice.inCall=false;h.voice.phase='idle';h.render();await h.flush();
+ for(const [id,text]of [['one','第一条消息'],['two','第二条消息']])h.emit({type:'accepted',message_id:id,client_id:id,text});
+ h.emit({type:'progress',message_id:'one',text:'正在查麦当劳菜单'});
+ h.emit({type:'progress',message_id:'two',text:'正在核对第二个需求'});
+ let tree=h.render();const progress=()=>all(tree,n=>n.type?.name==='MessageProgress');assert.equal(progress().length,2);assert.deepEqual(progress().map(n=>n.props.text),['正在查麦当劳菜单','正在核对第二个需求']);
+ h.emit({type:'delta',message_id:'one',text:'第一段回复'});tree=h.render();assert.equal(progress()[0].props.stream,'第一段回复');
+ h.emit(reply('one','第一条正式回复'));tree=h.render();assert.equal(progress().length,1);assert.equal(progress()[0].props.text,'正在核对第二个需求');
+ assert.equal(all(tree,n=>n.props?.className==='activity-strip').length,0);assert.equal(all(tree,n=>n.props?.className==='contact-progress').length,0);
+ h.emit(reply('two','第二条正式回复'));tree=h.render();assert.equal(progress().length,0);
+});
+test('texting during a phone call remains an ordinary message and does not interrupt playback',async()=>{
+ const h=harness();let tree=await connectPhone(h);let stops=0;h.voice.stopSpeech=()=>stops++;
+ const input=all(tree,n=>n.type==='textarea')[0];assert.ok(input);input.props.onChange({target:{value:'我在电话中发一条文字'}});tree=h.render();
+ all(tree,n=>n.type==='form'&&n.props.className==='composer wechat-composer')[0].props.onSubmit({preventDefault(){}});await h.flush();tree=h.render();
+ const sent=h.requests.filter(r=>r.url==='/api/contact/messages').at(-1);assert.equal(JSON.parse(sent.options.body).text,'我在电话中发一条文字');assert.equal(JSON.parse(sent.options.body).call_id,undefined);assert.equal(stops,0);
+ assert.equal(all(tree,n=>n.type==='article'&&n.props.className==='message user').length,1);
+ const before=h.spoken.length;h.emit({type:'accepted',message_id:'sms',client_id:JSON.parse(sent.options.body).client_id,text:'我在电话中发一条文字'});h.emit({type:'progress',message_id:'sms',text:'正在处理文字消息'});
+ h.emit(reply('sms','这是文字回复'));tree=h.render();assert.equal(h.spoken.length,before);assert.equal(all(tree,n=>n.type?.name==='CallBar').length,1);assert.equal(all(tree,n=>n.type==='textarea').length,1);
+});
+test('phone progress updates only the island subtitle, without a message placeholder',async()=>{
+ const h=harness();let tree=await connectPhone(h);h.emit({type:'accepted',call_id:'call-test-1',message_id:'phone-one',text:'电话说的话'});
+ h.emit({type:'progress',call_id:'call-test-1',message_id:'phone-one',text:'正在查滴滴车型'});tree=h.render();
+ assert.equal(all(tree,n=>n.type?.name==='CallBar')[0].props.progress,'正在查滴滴车型');assert.equal(all(tree,n=>n.type?.name==='MessageProgress').length,0);
+ assert.equal(all(tree,n=>n.props?.className==='activity-strip').length,0);assert.equal(all(tree,n=>n.props?.className==='contact-progress').length,0);
+});
+test('batched text reply replaces collected placeholders after the last user message',async()=>{
+ const h=harness();h.voice.inCall=false;h.render();await h.flush();
+ h.emit({type:'accepted',message_id:'one',client_id:'one',text:'第一段'});h.emit({type:'accepted',message_id:'two',client_id:'two',text:'补充条件'});
+ h.emit({...reply('one','已结合两条消息回复'),message_ids:['one','two']});const tree=h.render();assert.equal(all(tree,n=>n.type?.name==='MessageProgress').length,0);
+ const texts=all(tree,n=>n.type==='p'&&n.props.className==='message-text').map(n=>n.props.children);assert.deepEqual(texts,['第一段','补充条件','已结合两条消息回复']);
 });
