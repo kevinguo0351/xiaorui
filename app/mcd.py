@@ -7,9 +7,11 @@ the application does not expose an arbitrary MCP tool execution endpoint.
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
+from app import read_only
 from pathlib import Path
 import asyncio
 import json
+import os
 import re
 
 from dotenv import dotenv_values
@@ -20,6 +22,12 @@ from app.service_transport import service_http_client
 
 ROOT = Path(__file__).resolve().parents[1]
 ENDPOINT = 'https://mcp.mcd.cn'
+
+
+def mcd_token():
+    """Environment overrides local configuration, including an explicit empty value."""
+    local = dotenv_values(ROOT / '.env').get('MCD_MCP_TOKEN') or ''
+    return os.environ.get('MCD_MCP_TOKEN', local).strip()
 
 
 class McdRejectedError(RuntimeError):
@@ -69,7 +77,7 @@ class McdService:
 
     @asynccontextmanager
     async def _connection(self):
-        token = (dotenv_values(ROOT / '.env').get('MCD_MCP_TOKEN') or '').strip()
+        token = mcd_token()
         if not token:
             raise ValueError('请先在本地 .env 配置麦当劳 MCP Token。')
         try:
@@ -222,6 +230,8 @@ class McdService:
                 'take_way_codes': [w['code'] for w in data.get('takeWayList', []) if w.get('code')]}
 
     async def create_order(self, payload):
+        if read_only.READ_ONLY:
+            raise RuntimeError(read_only.MESSAGE)
         # Sole remote mutation path, called only after PlanService authorizes it.
         async with self._connection() as call:
             data = await call('create-order', payload)

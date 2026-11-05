@@ -5,6 +5,7 @@ import json
 import secrets
 import time
 from contextlib import asynccontextmanager
+from app import read_only
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -13,10 +14,11 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
-from app.mcd import McdService, McdRejectedError
+from app.mcd import McdService, McdRejectedError, mcd_token
 from app.plans import PlanStore, PlanError
 from app.recommendations import recommend
 from app.voice import router as voice_router
+from app.settings import router as settings_router
 from app.agent import AgentService, AgentError
 from app.foundation_scheduler import FoundationScheduler
 from app.actions import ActionError
@@ -46,6 +48,7 @@ async def lifespan(app):
 
 app = FastAPI(title='小瑞 · 本地生活助手', docs_url=None, redoc_url=None, lifespan=lifespan)
 app.include_router(voice_router)
+app.include_router(settings_router)
 service = McdService()
 plans = PlanStore(ROOT / '.local-data/plans.sqlite3', recover_running=False)
 agent = AgentService(service, plans)
@@ -64,6 +67,9 @@ async def local_boundary(request: Request, call_next):
         return JSONResponse({'detail': '不允许跨来源操作。'}, status_code=403)
     if request.method in {'POST', 'PUT', 'PATCH'} and not request.headers.get('content-type', '').startswith('application/json'):
         return JSONResponse({'detail': '请使用 JSON 请求。'}, status_code=415)
+    if (read_only.READ_ONLY and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'}
+            and request.url.path not in read_only.QUERY_POSTS):
+        return JSONResponse({'detail': read_only.MESSAGE}, status_code=403)
     session = request.cookies.get('pa_session')
     fresh = not session or len(session) < 32 or len(session) > 128
     request.state.owner = secrets.token_urlsafe(32) if fresh else session
@@ -333,8 +339,9 @@ async def read_call(fn, *args):
 
 @app.get('/api/health')
 async def health():
-    return {'ok': True, 'order_execution_enabled': ORDER_ENABLED,
-            'mcd_configured': bool(dotenv_values(ROOT / '.env').get('MCD_MCP_TOKEN')),
+    return {'ok': True, 'order_execution_enabled': ORDER_ENABLED and not read_only.READ_ONLY,
+            'read_only': read_only.READ_ONLY,
+            'mcd_configured': bool(mcd_token()),
             'agent_configured': agent.configured}
 
 
@@ -415,8 +422,8 @@ async def confirm(plan_id: str, body: Confirmation, request: Request):
 
 
 DIST = ROOT / 'frontend/dist'
-if (DIST / 'assets').exists():
-    app.mount('/assets', StaticFiles(directory=DIST / 'assets'), name='assets')
+app.mount('/assets', StaticFiles(directory=DIST / 'assets', check_dir=False), name='assets')
+app.mount('/mascot', StaticFiles(directory=DIST / 'mascot', check_dir=False), name='mascot')
 
 
 @app.get('/')

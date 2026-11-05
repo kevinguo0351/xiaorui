@@ -69,6 +69,10 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 `docs/acceptance/` 保存去凭证证据，`docs/research/` 保存原始调研材料，`experiments/` 保存复现脚本；它们不作为另一套规划。产品文档以此导航为准。
 
+## 协作者改动整合
+
+已选择性整合 PR #1 的陪伴角色、昵称头像、语音控制修复、真实处理进度、家人服务配置和可选只读模式。点击顶部助手头像／名字进入设置；现有资料卡入口保留。范围、使用方式与测试结果见 [PR #1 整合记录](docs/acceptance/pr1-selected-integration.md)。
+
 ## 验证与开源
 
 ```sh

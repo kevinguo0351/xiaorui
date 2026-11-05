@@ -5,7 +5,7 @@ function harness(){
  const state=[],cleanups=[],intervals=[],sockets=[],players=[],requests=[];let index=0,now=10000,stopped=0,worklet;
  const hooks={useRef:v=>({current:v}),useState:v=>{const i=index++;state[i]=v;return[v,x=>{state[i]=typeof x==='function'?x(state[i]):x}];},useEffect:f=>cleanups.push(f())};
  class Socket{static OPEN=1;constructor(){this.readyState=1;this.bufferedAmount=0;this.sent=[];sockets.push(this);}send(v){this.sent.push(v);}close(){this.readyState=3;}receive(data){this.onmessage?.({data:JSON.stringify(data)});}}
- class Worklet{constructor(){this.port={postMessage:message=>{if(message==='flush')this.port.onmessage?.({data:'flushed'});}};worklet=this;}connect(){}disconnect(){}}
+ class Worklet{constructor(){this.port={postMessage:message=>{if(message?.type==='flush')this.port.onmessage?.({data:{type:'flushed',id:message.id}});}};worklet=this;}connect(){}disconnect(){}}
  class Context{constructor(){this.audioWorklet={addModule:async()=>{}};this.destination={};}async resume(){}async close(){}createMediaStreamSource(){return{connect(){}};}createGain(){return{gain:{value:0},connect(){}};}}
  class Audio{constructor(url){this.url=url;players.push(this);}play(){this.onplaying?.();return Promise.resolve();}pause(){this.paused=true;}removeAttribute(name){if(name==='src')this.detached=true;}load(){}dispatchEvent(e){if(e.type==='ended')this.onended?.();}}
  const module={exports:{}};const context={module,exports:module.exports,require:n=>n==='react'?hooks:require(n),
@@ -41,7 +41,7 @@ test('hangup during pending ASR closes socket and does not send unfinished trans
 test('single voice message waits for stop, submits once, then releases microphone',async()=>{
  const h=harness();await h.voice.startRecording();assert.equal(h.sockets.length,1);h.sockets[0].receive({type:'ready'});h.audio();h.silence();
  assert.equal(h.sockets[0].sent.some(v=>typeof v==='string'&&v.includes('finish')),false);
- h.voice.stopRecording();assert.equal(h.sockets[0].sent.some(v=>typeof v==='string'&&v.includes('finish')),true);
+ h.voice.stopRecording();assert.equal(h.stopped,1);assert.deepEqual(h.received,[]);assert.equal(h.sockets[0].sent.some(v=>typeof v==='string'&&v.includes('finish')),true);
  h.sockets[0].receive({type:'final',text:'一条语音消息'});h.sockets[0].receive({type:'final',text:'不能重复'});assert.deepEqual(h.received,['一条语音消息']);assert.equal(h.stopped,1);assert.equal(h.sockets.length,1);h.cleanup();
 });
 test('switching away cancels a voice message without sending partial text',async()=>{
@@ -62,4 +62,31 @@ test('a whole reply uses one progressive audio stream and interruption detaches 
  assert.equal(h.players.length,1);assert.equal(h.players[0].url,'/api/voice/tts/stream/test-ticket');
  assert.equal(h.requests.filter(x=>x.url.endsWith('/prepare')).length,1);
  h.voice.stopSpeech();await playback;assert.equal(h.players[0].detached,true);assert.deepEqual(h.errors,[]);h.cleanup();
+});
+
+// Selected capture fixes must coexist with progressive playback.
+test('ASR final before the user finishes cannot submit a partial message',async()=>{
+ for(const mode of ['startRecording','startCall']){const h=harness();await h.voice[mode]();if(mode==='startCall'){h.loud();h.audio();}
+ h.sockets[0].receive({type:'ready'});h.sockets[0].receive({type:'final',text:'还没说完'});
+ assert.deepEqual(h.received,[]);assert.equal(h.stopped,1);assert.match(h.errors[0],/提前结束/);h.cleanup();}
+});
+test('stop before ASR readiness releases microphone and later submits only after ready',async()=>{
+ const h=harness();await h.voice.startRecording();h.audio();h.voice.stopRecording();assert.equal(h.stopped,1);assert.deepEqual(h.received,[]);
+ h.sockets[0].receive({type:'ready'});assert.equal(h.sockets[0].sent.filter(v=>typeof v==='string'&&v.includes('finish')).length,1);
+ h.sockets[0].receive({type:'final',text:'连接前已经说完'});assert.deepEqual(h.received,['连接前已经说完']);h.cleanup();
+});
+test('cancel during final recognition drops late text after microphone release',async()=>{
+ const h=harness();await h.voice.startRecording();h.sockets[0].receive({type:'ready'});h.voice.stopRecording();assert.equal(h.stopped,1);
+ h.voice.cancelRecording();h.sockets[0].receive({type:'final',text:'不要再发送'});assert.deepEqual(h.received,[]);assert.equal(h.stopped,1);h.cleanup();
+});
+test('manual call finish is idempotent and does not close the following turn',async()=>{
+ const h=harness();await h.voice.startCall();h.loud();h.audio();h.sockets[0].receive({type:'ready'});h.voice.finish();h.voice.finish();
+ assert.equal(h.sockets[0].sent.filter(v=>typeof v==='string'&&v.includes('finish')).length,1);
+ h.sockets[0].receive({type:'final',text:'第一轮'});h.silence();h.loud();h.audio();h.sockets[1].receive({type:'ready'});
+ assert.equal(h.sockets[1].sent.some(v=>typeof v==='string'&&v.includes('finish')),false);h.cleanup();
+});
+test('streaming speech exposes timing spans without recording speech text',async()=>{
+ const h=harness();const playback=h.voice.speak('请不要记录这句话。');await h.flush();h.players[0].dispatchEvent(new Event('ended'));await playback;
+ assert.deepEqual(Array.from(h.voice.speechMetrics.current,m=>m.stage),['tts_request_start','stream_ready','playback_started','playback_ended']);
+ assert.doesNotMatch(JSON.stringify(h.voice.speechMetrics.current),/请不要记录/);h.cleanup();
 });

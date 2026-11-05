@@ -10,6 +10,7 @@ import os
 import secrets
 import sqlite3
 import time
+from app import read_only
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -127,6 +128,8 @@ class ActionManager:
             self.invalidate_pending(owner)
 
     def prepare(self, owner, provider, action, request, quote):
+        if read_only.READ_ONLY:
+            raise ActionError(read_only.MESSAGE, 403)
         if provider not in self.PROVIDERS or (action not in {'create','cancel'} and not (provider=='mcd' and action=='create_address')):
             raise ActionError('不支持这项操作。')
         self._quote(quote)
@@ -181,6 +184,8 @@ class ActionManager:
             return plan
 
     async def confirm(self, owner, id, version, token, text):
+        if read_only.READ_ONLY:
+            raise ActionError(read_only.MESSAGE, 403)
         # A SQLite CAS prevents another process from issuing a second request.
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
