@@ -41,6 +41,8 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 | `MCD_MCP_TOKEN`、`LUCKIN_MCP_TOKEN`、`DIDI_MCP_KEY` | 三个平台各自的官方 MCP 凭据 |
 | `MCD_ORDER_ENABLED`、`LUCKIN_ORDER_ENABLED`、`DIDI_ORDER_ENABLED` | 默认均为 `false`；开启也不能代替每个具体方案的二次确认 |
 
+真实叫车需由本人或家人明确开启：在本机 `.env` 设置 `DIDI_ORDER_ENABLED=true` 后重启服务；启动命令中的同名环境变量优先于 `.env`，不能仍强制设为 `false`。开启只允许执行已核对且再次确认的当前方案，不会立即发单。确认前重新估价，车型、费用或接送点变化时再次确认；结果未知不重复提交。关联滴滴账号可能免密扣款。麦当劳与瑞幸的开关独立配置，无需同时开启。
+
 官方入口：[火山方舟](https://console.volcengine.com/ark)、[豆包语音](https://console.volcengine.com/speech/service)、[麦当劳 MCP](https://open.mcd.cn/mcp)、[瑞幸 MCP](https://open.lkcoffee.com/mcp)、[滴滴 MCP](https://mcp.didichuxing.com/)。语音使用新版 `X-Api-Key` 鉴权，旧版 AppID/Token 不能直接代填。
 
 若模型返回 `SetLimitExceeded`，检查方舟开通管理中的模型用量上限与安心体验模式；只充值余额可能无法解除该限制。缺凭据或接口失败时如实提示，不使用假菜单、假价格、假转录或假订单。
