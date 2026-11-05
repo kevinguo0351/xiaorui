@@ -54,7 +54,7 @@ export function ActionCard({plan,active,speak,onChange,onPrepared}:{plan:ActionP
  const payment=plan.order?.payment_url;
  return <section className="order-card action-card" aria-label={`${providers[plan.provider]}操作方案`}>
   <div className="card-overline">{providers[plan.provider]} · {states[expired&&review?'expired':plan.status]||'请核对当前结果'}</div>
-  <h3>{plan.action==='create_address'?'新增配送地址':plan.action==='cancel'?'取消订单方案':plan.provider==='didi'?'出行方案':'点餐方案'}</h3>
+  <h3>{plan.action==='create_address'?'新增配送地址':plan.action==='cancel'?'取消订单方案':plan.provider==='didi'?'出行方案':plan.provider==='luckin'?'饮品方案':'点餐方案'}</h3>
   <dl className="action-details">{Object.entries(plan.summary).map(([key,value])=>{
    const label=names[key]||(/^[\u4e00-\u9fff]/.test(key)?key:'');const text=details(value);
    return label&&text?<div key={key}><dt>{label}</dt><dd>{text}</dd></div>:null;

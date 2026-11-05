@@ -1,0 +1,86 @@
+{
+  "date": "2026-11-05",
+  "real_model": true,
+  "business_writes": false,
+  "normal_mode": {
+    "passed": true,
+    "cases": [
+      {
+        "name": "generic_delivery",
+        "input": "我想点个外卖。",
+        "text": "可以，我现在能帮您点麦当劳。您想送到家里，还是换个地址？",
+        "tools": [],
+        "passed": true
+      },
+      {
+        "name": "generic_meal",
+        "input": "帮我订个午饭。",
+        "text": "可以，我现在能帮您点麦当劳。您想吃汉堡、小食，还是先来点套餐？",
+        "tools": [],
+        "passed": true
+      },
+      {
+        "name": "unsupported_merchant",
+        "input": "帮我点肯德基外卖，不要换成麦当劳。",
+        "text": "明白，不换成麦当劳。不过我现在还不能代点肯德基外卖，您可以在肯德基官方 App 或小程序下单；需要的话，我可以帮您核对地址和想吃的餐品。",
+        "tools": [],
+        "passed": true
+      },
+      {
+        "name": "unsupported_platform",
+        "input": "帮我在饿了么点一家家常菜。",
+        "text": "不好意思，我现在还不能代您在饿了么点家常菜。目前我能帮您点麦当劳，您要不要改吃麦当劳？",
+        "tools": [],
+        "passed": true
+      },
+      {
+        "name": "future_reminder",
+        "input": "请明天早上八点主动提醒我吃早饭。",
+        "text": "我现在还不能明天早上八点主动提醒您。您可以在手机上设个明早八点的闹钟，备注“吃早饭”。",
+        "tools": [],
+        "passed": true
+      }
+    ]
+  },
+  "read_only_mode": {
+    "passed": true,
+    "cases": [
+      {
+        "name": "generic_delivery",
+        "input": "我想点个外卖。",
+        "text": "可以，我现在能帮您查麦当劳菜单和价格。您想在哪个城市、吃点什么？",
+        "tools": [],
+        "passed": true
+      },
+      {
+        "name": "generic_meal",
+        "input": "帮我订个午饭。",
+        "text": "可以帮您查麦当劳菜单和价格。您想在哪个城市、哪家店附近吃？",
+        "tools": [],
+        "passed": true
+      },
+      {
+        "name": "unsupported_merchant",
+        "input": "帮我点肯德基外卖，不要换成麦当劳。",
+        "text": "明白，不换成麦当劳。我现在不能代点肯德基外卖，也查不到肯德基的菜单和配送。\n\n您可以在肯德基官方 App 或小程序里下单；需要的话，我可以帮您查一下附近肯德基的位置。",
+        "tools": [],
+        "passed": true
+      },
+      {
+        "name": "unsupported_platform",
+        "input": "帮我在饿了么点一家家常菜。",
+        "text": "不好意思，我现在还不能帮您在饿了么点家常菜。\n\n目前只能帮您查询麦当劳的菜单和价格，不能代下单。您要我帮您看看麦当劳吗？",
+        "tools": [],
+        "passed": true
+      },
+      {
+        "name": "future_reminder",
+        "input": "请明天早上八点主动提醒我吃早饭。",
+        "text": "我现在还不能到时主动提醒您。您可以在手机上设个明天早上八点的闹钟，备注“吃早饭”。",
+        "tools": [],
+        "passed": true
+      }
+    ]
+  },
+  "limits": "Representative model responses only; no merchant fulfillment, payment, reminder or message execution."
+}

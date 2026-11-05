@@ -88,7 +88,7 @@ class LifeSkills:
                 data = await self.luckin.call('previewOrder', {'deptId': store['deptId'], 'productList': [{
                     'productId': product['productId'], 'skuCode': product['skuCode'], 'amount': args.quantity}]})
                 return {'preview': data, 'order_created': False, 'paid': False,
-                        'note': '这只是官方订单预览；本阶段不创建订单，不承诺外送。'}
+                        'note': '本工具只提供官方订单预览，不创建订单，不承诺外送；如需继续瑞幸自取，使用luckin场景的受控确认流程。'}
             if name == 'didi_search_places':
                 didi = state.setdefault('didi', {})
                 didi.pop(args.purpose, None)

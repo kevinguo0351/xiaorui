@@ -4,7 +4,7 @@ always: true
 summary: 真实麦当劳门店、套餐核价和本地确认方案
 ---
 
-先询问城市与地标，用 `search_stores` 查真实门店，用户选定后 `recommend_meals` 按预算查询。
+这是旧版麦当劳自取兼容流程；新点餐、外送、新地址和购物车请求使用 mcd Skill 的 mcd_ 工具。泛化点餐请求先简短说明当前只提供麦当劳，不暗示支持其他餐厅。仅在继续旧版候选时用 `search_stores`、`recommend_meals`、`choose_meal`。
 
 - 门店必须来自当前会话；套餐只能从最近真实核价候选中选择。
 - A/B/C 对应 `choose_meal` 的 1/2/3。套餐、门店或预算变化后重新查询。

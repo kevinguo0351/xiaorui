@@ -33,3 +33,6 @@ test('pending meal does not offer cancellation of a real order',()=>{
  const html=card({status:'awaiting_confirmation',order:undefined});
  assert.match(html,/确认下单/);assert.doesNotMatch(html,/查看取消条件/);
 });
+test('Luckin is described as a drink plan rather than a general meal service',()=>{
+ const html=card({provider:'luckin'});assert.match(html,/饮品方案/);assert.doesNotMatch(html,/点餐方案|查看取消条件/);
+});
