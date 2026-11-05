@@ -10,7 +10,7 @@ function harness(options={}){
  const hooks={...React,useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(value){const i=index++;if(!(i in slots))slots[i]={current:value};return slots[i];},useEffect(effect,deps){const i=index++;const old=slots[i];if(!old||!deps||deps.some((value,n)=>value!==old[n])){slots[i]=deps;effect();}}};
  class EventSource{constructor(){source=this;}close(){}}
  const module={exports:{}};
- const fetch=async (url,requestOptions)=>{requests.push({url,options:requestOptions});return{ok:true,headers:{get:()=> 'application/json'},json:async()=>url==='/api/health'?{mcd_configured:true,agent_configured:true}:url==='/api/contact/state'?{events:options.replay||[],cursor:0,pending:0}:url==='/api/chat/history'?{messages:[]}:url==='/api/actions'?{actions:[]}:url==='/api/contact/calls'?{id:'call-test-1',started_at:Date.now()/1000}:url.endsWith('/end')?{id:'call-test-1',started_at:Date.now()/1000-65,duration_seconds:65}: {accepted:true}};};
+ const fetch=async (url,requestOptions)=>{requests.push({url,options:requestOptions});if(options.request){const result=await options.request(url,requestOptions);if(result)return result;}return{ok:true,headers:{get:()=> 'application/json'},json:async()=>url==='/api/health'?{mcd_configured:true,agent_configured:true}:url==='/api/contact/state'?{events:options.replay||[],cursor:0,pending:0}:url==='/api/chat/history'?{messages:[]}:url==='/api/actions'?{actions:[]}:url==='/api/contact/calls'?{id:'call-test-1',started_at:Date.now()/1000}:url.endsWith('/end')?{id:'call-test-1',started_at:Date.now()/1000-65,duration_seconds:65}: {accepted:true}};};
  vm.runInNewContext(code,{module,exports:module.exports,require:name=>name==='react'?hooks:name==='react-dom/client'?{createRoot:()=>({render(){}})}:name==='./useVoice'?{useVoice:(onFinal,onError,onSpeechStart)=>{callbacks={onFinal,onError,onSpeechStart};return voice;}}:name==='./Companion'?{Companion(){},CompanionAvatar(){},companionMood:()=> 'idle'}:name==='./SettingsDialog'?{SettingsDialog(){},useCompanionSettings:()=>({settings:{name:'小瑞',avatar:'portrait'},updateSettings(){}})}:name==='./CallBar'?{CallBar(){},callDuration:s=>String(s)}:name==='./ProfileCard'?{ProfileCard(){}}:name==='./location'?{locate:async()=>10}:name==='./ActionCard'?{}:name.endsWith('.css')?{}:require(name),document:{getElementById:()=>({}),addEventListener(){},removeEventListener(){}},EventSource,fetch,crypto:require('node:crypto'),setInterval:()=>1,clearInterval(){},console});
  const render=()=>{index=0;return module.exports.App();};
  const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
@@ -150,4 +150,49 @@ test('batched text reply replaces collected placeholders after the last user mes
  h.emit({type:'accepted',message_id:'one',client_id:'one',text:'第一段'});h.emit({type:'accepted',message_id:'two',client_id:'two',text:'补充条件'});
  h.emit({...reply('one','已结合两条消息回复'),message_ids:['one','two']});const tree=h.render();assert.equal(all(tree,n=>n.type?.name==='MessageProgress').length,0);
  const texts=all(tree,n=>n.type==='p'&&n.props.className==='message-text').map(n=>n.props.children);assert.deepEqual(texts,['第一段','补充条件','已结合两条消息回复']);
+});
+
+// Elderly-user scenarios: hesitation, double taps, mixed channels and accidental navigation.
+test('elderly user double-taps send while the first receipt is pending: only one message is submitted',async()=>{
+ let release;const wait=new Promise(resolve=>{release=resolve;});
+ const h=harness({request:async(url)=>{if(url==='/api/contact/messages'){await wait;return{ok:true,headers:{get:()=> 'application/json'},json:async()=>({accepted:true})};}}});
+ h.voice.inCall=false;h.voice.phase='idle';h.render();await h.flush();let tree=h.render();all(tree,n=>n.type==='textarea')[0].props.onChange({target:{value:'帮我看看午饭'}});tree=h.render();
+ const submit=all(tree,n=>n.type==='form'&&n.props.className==='composer wechat-composer')[0].props.onSubmit;
+ submit({preventDefault(){}});submit({preventDefault(){}});await h.flush();release();await h.flush();
+ assert.equal(h.requests.filter(r=>r.url==='/api/contact/messages').length,1);
+});
+test('elderly user accidentally opens settings during a call: the phone must not hang up',async()=>{
+ const h=harness();let tree=await connectPhone(h);
+ all(tree,n=>n.props?.className==='brand companion-settings-entry')[0].props.onClick();await h.flush();tree=h.render();
+ assert.equal(all(tree,n=>n.type?.name==='SettingsDialog')[0].props.open,true);
+ assert.equal(all(tree,n=>n.type?.name==='CallBar').length,1);
+ assert.equal(h.requests.filter(r=>r.url.endsWith('/end')).length,0);
+});
+test('elderly user taps end-call in the plus menu: it really ends the call once',async()=>{
+ const h=harness();let tree=await connectPhone(h);buttonByLabel(tree,'更多功能').props.onClick();tree=h.render();
+ const end=buttonByLabel(tree,'结束语音通话');assert.ok(end);end.props.onClick();await h.flush();tree=h.render();
+ assert.equal(h.requests.filter(r=>r.url.endsWith('/end')).length,1);assert.equal(all(tree,n=>n.type?.name==='CallBar').length,0);
+});
+test('elderly user speaks while slowly typing an address: the unsent draft remains intact',async()=>{
+ const h=harness();let tree=await connectPhone(h);all(tree,n=>n.type==='textarea')[0].props.onChange({target:{value:'三号楼二单元'}});tree=h.render();
+ h.callbacks.onFinal('我还在找门牌，等我一下');await h.flush();tree=h.render();
+ assert.equal(all(tree,n=>n.type==='textarea')[0].props.value,'三号楼二单元');
+ const request=h.requests.find(r=>r.url==='/api/contact/messages');assert.equal(JSON.parse(request.options.body).call_id,'call-test-1');
+});
+test('elderly user hangs up twice: one duration record, no double end request',async()=>{
+ const h=harness();let tree=await connectPhone(h);const end=all(tree,n=>n.type?.name==='CallBar')[0].props.onHangup;end();end();await h.flush();tree=h.render();
+ assert.equal(h.requests.filter(r=>r.url.endsWith('/end')).length,1);assert.equal(all(tree,n=>n.props?.className==='phone-record').length,1);
+});
+
+test('elderly user loses network then retries: preserve text and reuse the same request id',async()=>{
+ let attempt=0;const h=harness({request:async url=>{if(url==='/api/contact/messages'){attempt++;return{ok:attempt>1,headers:{get:()=> 'application/json'},json:async()=>attempt===1?{detail:'网络暂时不可用'}:{accepted:true}};}}});
+ h.voice.inCall=false;h.voice.phase='idle';h.render();await h.flush();let tree=h.render();all(tree,n=>n.type==='textarea')[0].props.onChange({target:{value:'帮我找附近的店'}});tree=h.render();
+ all(tree,n=>n.type==='form'&&n.props.className==='composer wechat-composer')[0].props.onSubmit({preventDefault(){}});await h.flush();tree=h.render();
+ assert.equal(all(tree,n=>n.type?.name==='MessageProgress').length,0);const retry=all(tree,n=>n.type==='button'&&n.props.children==='重试发送')[0];assert.ok(retry);retry.props.onClick();await h.flush();
+ const sent=h.requests.filter(r=>r.url==='/api/contact/messages').map(r=>JSON.parse(r.options.body));assert.equal(sent.length,2);assert.equal(sent[0].client_id,sent[1].client_id);assert.equal(sent[1].text,'帮我找附近的店');
+});
+test('elderly user cannot grant microphone permission: end the call record and keep typing available',async()=>{
+ const h=harness();h.voice.startCall=async()=>{h.voice.inCall=false;h.voice.phase='idle';h.callbacks.onError('麦克风未获允许，您仍可以打字。');return false;};
+ const tree=await connectPhone(h);assert.equal(all(tree,n=>n.type?.name==='CallBar').length,0);assert.equal(all(tree,n=>n.type==='textarea').length,1);assert.equal(h.requests.filter(r=>r.url.endsWith('/end')).length,1);
+ assert.ok(all(tree,n=>n.props?.role==='alert').some(n=>JSON.stringify(n.props.children).includes('麦克风未获允许')));
 });

@@ -298,7 +298,7 @@ class AgentService:
 
         async def context(request):
             return [data_context('conversation_channel', {'mode':'phone' if contact_call.get() else 'chat',
-                    'guidance':'正在实时电话通话。像真人打电话一样简短承接用户的话；主动问一个推进当前事情所必需的问题，不重复已知条件。需要选择时发真实卡片，并说我给您发了卡片，选好告诉我。不要假设用户正在看屏幕；可语音解释选项。通话不改变真实交易确认规则。' if contact_call.get() else '普通消息聊天。自然承接上下文，必要时主动问一个问题，不机械追加问句。'}),
+                    'guidance':'正在实时电话通话。像真人打电话一样简短承接用户的话，默认一两句短口语。缺资料时只问当前最必要的一项，不先罗列后续还要提供的多项资料。对方说没听清、不会操作或让你一句一句说时，减少信息量，一步一步引导，不声称已经调整硬件音量或语速。主动问一个推进当前事情所必需的问题，不重复已知条件。需要选择时发真实卡片，并说我给您发了卡片，选好告诉我。不要假设用户正在看屏幕；可语音解释选项。通话不改变真实交易确认规则。' if contact_call.get() else '普通消息聊天。自然承接上下文，必要时主动问一个问题，不机械追加问句。'}),
                     data_context('capability_policy', {'read_only': read_only.READ_ONLY, 'message': read_only.MESSAGE if read_only.READ_ONLY else '依实际工具能力执行'}),
                     data_context('canonical_profile', self.store.model_profile()),
                     data_context('service_candidates', model_safe(session.services)),

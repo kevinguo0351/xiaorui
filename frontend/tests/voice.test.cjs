@@ -53,7 +53,7 @@ test('completed speech submits sooner while hesitation and confirmation keep a l
  const h=harness();await h.voice.startCall();h.loud();h.audio();h.sockets[0].receive({type:'ready'});
  h.sockets[0].receive({type:'partial',text:'陪我聊聊吧。'});h.silence(950);
  assert.ok(h.sockets[0].sent.some(x=>typeof x==='string'&&x.includes('finish')));
- assert.equal(h.silenceDelay('然后，'),1800);assert.equal(h.silenceDelay('确认叫车。'),1800);assert.equal(h.silenceDelay(''),1800);
+ assert.equal(h.silenceDelay('然后，'),4000);assert.equal(h.silenceDelay('确认叫车。'),1800);assert.equal(h.silenceDelay(''),1800);
  h.cleanup();
 });
 
@@ -89,4 +89,11 @@ test('streaming speech exposes timing spans without recording speech text',async
  const h=harness();const playback=h.voice.speak('请不要记录这句话。');await h.flush();h.players[0].dispatchEvent(new Event('ended'));await playback;
  assert.deepEqual(Array.from(h.voice.speechMetrics.current,m=>m.stage),['tts_request_start','stream_ready','playback_started','playback_ended']);
  assert.doesNotMatch(JSON.stringify(h.voice.speechMetrics.current),/请不要记录/);h.cleanup();
+});
+
+test('elderly caller explicitly hesitates for 2.5 seconds: do not prematurely submit the unfinished sentence',async()=>{
+ const h=harness();await h.voice.startCall();h.loud();h.audio();h.sockets[0].receive({type:'ready'});
+ h.sockets[0].receive({type:'partial',text:'我想想，那个'});h.silence(2500);
+ assert.equal(h.sockets[0].sent.some(v=>typeof v==='string'&&v.includes('finish')),false);
+ h.silence(1600);assert.equal(h.sockets[0].sent.filter(v=>typeof v==='string'&&v.includes('finish')).length,1);h.cleanup();
 });

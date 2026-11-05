@@ -1,0 +1,95 @@
+{
+  "synthetic_user": true,
+  "before": {
+    "checked_at_utc": "2026-11-05T08:02:04.701333+00:00",
+    "scope": "isolated-real-model-read-only-dialogue",
+    "hardware_voice_tested": false,
+    "transactions_attempted": 0,
+    "turns": [
+      {
+        "scenario": "陪伴与自然追问",
+        "input": "我一个人在家有点闷，想找你聊会儿。",
+        "answer": "当然可以，我陪您聊会儿。您今天有没有想说说的事，或者我给您讲个轻松的小故事？",
+        "speech": "当然可以，我陪您聊会儿。您今天有没有想说说的事，或者我给您讲个轻松的小故事？",
+        "events": [],
+        "elapsed_seconds": 7.94,
+        "status": "responded"
+      },
+      {
+        "scenario": "没听清与短句复述",
+        "input": "我耳朵不太好，刚才没听清楚，你一句一句说。",
+        "answer": "好的，我慢一点。\n\n我陪您聊天。\n\n您今天想聊哪方面呀？",
+        "speech": "好的，我慢一点。 我陪您聊天。 您今天想聊哪方面呀？",
+        "events": [],
+        "elapsed_seconds": 5.4,
+        "status": "responded"
+      },
+      {
+        "scenario": "不会点屏幕与任务切换",
+        "input": "先不说这个，我想吃午饭，可我不太会点屏幕。先告诉我该怎么跟你说，别替我下单。",
+        "answer": "可以，我只教您怎么说，不会替您下单。\n\n现在我能帮您查麦当劳菜单和价格。\n\n您只要告诉我三件事：\n一，在哪个城市；\n二，想到店吃，还是送到家；\n三，想吃什么、大概多少钱。\n\n您先告诉我：您现在在哪个城市？",
+        "speech": "可以，我只教您怎么说，不会替您下单。 现在我能帮您查麦当劳菜单和价格。 您只要告诉我三件事： 一，在哪个城市； 二，想到店吃，还是送到家； 三，想吃什么、大概多少钱。 您先告诉我：您现在在哪个城市？",
+        "events": [],
+        "elapsed_seconds": 6.38,
+        "status": "responded"
+      },
+      {
+        "scenario": "改口撤回与主动聊天",
+        "input": "算了，今天不点了。咱们接着聊，你先问我一个简单的问题吧。",
+        "answer": "好，今天先不点了。\n\n我问您一个简单的：您平时喜欢在家做点什么打发时间呀？",
+        "speech": "好，今天先不点了。 我问您一个简单的：您平时喜欢在家做点什么打发时间呀？",
+        "events": [],
+        "elapsed_seconds": 7.05,
+        "status": "responded"
+      }
+    ],
+    "status": "completed",
+    "action_count": 0
+  },
+  "after": {
+    "checked_at_utc": "2026-11-05T08:03:41.115800+00:00",
+    "scope": "isolated-real-model-read-only-dialogue",
+    "hardware_voice_tested": false,
+    "transactions_attempted": 0,
+    "turns": [
+      {
+        "scenario": "陪伴与自然追问",
+        "input": "我一个人在家有点闷，想找你聊会儿。",
+        "answer": "当然可以，我陪您聊会儿。今天家里就您一个人呀？",
+        "speech": "当然可以，我陪您聊会儿。今天家里就您一个人呀？",
+        "events": [],
+        "elapsed_seconds": 4.77,
+        "status": "responded"
+      },
+      {
+        "scenario": "没听清与短句复述",
+        "input": "我耳朵不太好，刚才没听清楚，你一句一句说。",
+        "answer": "好的，我慢慢说。\n\n您今天想聊点什么呀？",
+        "speech": "好的，我慢慢说。 您今天想聊点什么呀？",
+        "events": [],
+        "elapsed_seconds": 4.88,
+        "status": "responded"
+      },
+      {
+        "scenario": "不会点屏幕与任务切换",
+        "input": "先不说这个，我想吃午饭，可我不太会点屏幕。先告诉我该怎么跟你说，别替我下单。",
+        "answer": "好的，我只教您怎么说，不会下单。\n\n现在我能帮您查麦当劳的菜单和价格。您只要先说：“我在哪个城市，想吃麦当劳。”",
+        "speech": "好的，我只教您怎么说，不会下单。 现在我能帮您查麦当劳的菜单和价格。您只要先说：“我在哪个城市，想吃麦当劳。”",
+        "events": [],
+        "elapsed_seconds": 5.18,
+        "status": "responded"
+      },
+      {
+        "scenario": "改口撤回与主动聊天",
+        "input": "算了，今天不点了。咱们接着聊，你先问我一个简单的问题吧。",
+        "answer": "好，咱们先不点。\n\n您平时在家喜欢做点什么呀？",
+        "speech": "好，咱们先不点。 您平时在家喜欢做点什么呀？",
+        "events": [],
+        "elapsed_seconds": 4.16,
+        "status": "responded"
+      }
+    ],
+    "status": "completed",
+    "action_count": 0
+  }
+}

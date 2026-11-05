@@ -9,7 +9,8 @@ const processor=`class PCM extends AudioWorkletProcessor {
 // Completed sentences can finish sooner; hesitation and confirmations retain room.
 export function silenceDelay(text:string){
  const value=text.trim();
- if(!value||/确认(?:叫车|下单|取消)|(?:然后|还有|那个|这个|就是|我想|但是|或者|嗯|呃)[，,、\s]*$/.test(value))return 1800;
+ if(/(?:然后|还有|那个|这个|就是|我想|我想想|让我想想|等一下|稍等|但是|或者|嗯|呃)[，,、。\s]*$/.test(value))return 4000;
+ if(!value||/确认(?:叫车|下单|取消)/.test(value))return 1800;
  return /[。！？!?]$/.test(value)?900:1200;
 }
 type Turn={socket:WebSocket;ready:boolean;closing:boolean;pending:ArrayBuffer[];lastText:string;timeout?:ReturnType<typeof setTimeout>;limit?:ReturnType<typeof setTimeout>};
