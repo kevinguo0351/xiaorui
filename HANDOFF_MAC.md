@@ -31,7 +31,7 @@ Tailscale 分三种场景：
 | 原版工作分支 | `trial/local-run-rust-assessment`；应用代码基线 `60f4425da1c35dd7142570a50db3bbac481d20f2`，本文之后的交接提交以远端最新 HEAD 为准 |
 | Flutter 分支 | `xiaohu_flutter`；`a39133b8fa66d8c1addbe0c5323dff21f8713806` |
 | 原仓库 | https://github.com/perry112926-ai/xiaorui |
-| 草稿 PR | https://github.com/perry112926-ai/xiaorui/pull/1 ，本轮核查为 OPEN／Draft，未合并；下一位开发者重新查询状态 |
+| 草稿 PR | https://github.com/perry112926-ai/xiaorui/pull/1 ，推送后最终核查为 CLOSED／Draft，`mergedAt=null`，未合并（关闭时间 2026-11-05 20:38:50 UTC）；下一位开发者重新查询状态 |
 | Poki 上游 | https://github.com/JosssphZhou/poki |
 | Poki 审查基线 | `ea28be1872952a27b0dade59e6ccc6405854ef19`；只读克隆检查过，未安装／构建／连接真机；尚未在当前账号创建 Poki Fork |
 | 开发验证环境 | Ubuntu Linux；不是用户 Mac，也不是 iPhone 实机 |
