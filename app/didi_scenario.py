@@ -199,7 +199,7 @@ class DidiScenario:
                 state.pop('estimate',None); state.pop('route',None)
                 origin=choose(state.get('origin'),args.origin_index)
                 if origin.get('location_expires_at',float('inf')) < time.time():
-                    raise ValueError('起点定位已过期，请重新定位或提供地标。')
+                    raise ServiceUnavailable('起点定位已过期，请重新定位或提供地标。')
                 destination=choose(state.get('destination'),args.destination_index)
                 route={}
                 for prefix,place in [('from',origin),('to',destination)]:
@@ -220,7 +220,7 @@ class DidiScenario:
                 expiry=(state.get('estimate') or {}).get('location_expires_at')
                 if expiry is not None and expiry!=float('inf'):
                     request['location_expires_at']=expiry
-                    if expiry<time.time():raise ValueError('起点定位已过期，请重新定位。')
+                    if expiry<time.time():raise ServiceUnavailable('起点定位已过期，请重新定位。')
                 # Reuse this turn's recent estimate for the selection card.
                 # Host confirmation still calls quote() for a fresh estimate.
                 cached=state['estimate']
