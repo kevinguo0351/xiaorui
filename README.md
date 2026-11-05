@@ -74,7 +74,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ```sh
 uv run python -m unittest discover -s tests -q
-node --test frontend/tests/voice.test.cjs
+node --test frontend/tests/*.test.cjs
 ```
 
 离线测试不代替真实模型、外部接口、真人语音或真实交易验收。真实接口实验可能产生费用，真实交易必须先确认具体方案。

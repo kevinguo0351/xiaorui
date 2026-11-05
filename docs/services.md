@@ -47,3 +47,13 @@ uv run python -m experiments.mcd_delivery_acceptance --help
 广州外送实验需由用户选定实际返回地址和候选；历史序号不可复用。账号、地址、支付链接及原始响应只保存在忽略的本地目录。
 
 官方参考：[麦当劳工具目录](https://github.com/M-China/mcd-mcp-server)、[瑞幸 MCP](https://open.lkcoffee.com/mcp)、[滴滴 MCP](https://mcp.didichuxing.com/)。
+
+## 当前机器的安全连通检查
+
+```sh
+uv run python experiments/read_only_service_check.py --output .local-data/read-only-service-check.json
+```
+
+该命令只使用固定公开测试地点，分别发现账号工具目录、校验 schema、执行门店／地点查询；不查询私人地址、历史订单，不核价、不创建或取消订单。每个平台有超时限制，报告不包含原始响应和凭据。目录可读和业务查询成功分开报告。
+
+本轮运行三平台均为 `not_configured`，没有发起远程请求，不能算真实连通成功。去敏结果见 [本机接口检查](acceptance/react-service-check.json)。历史验收记录仍保留其当时环境和版本含义。

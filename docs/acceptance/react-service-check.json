@@ -1,0 +1,40 @@
+{
+  "checked_at_utc": "2026-11-05T05:47:41.148563+00:00",
+  "mode": "read-only-public-connectivity",
+  "checks": [
+    {
+      "provider": "mcd",
+      "configured": false,
+      "discovery": "not_configured",
+      "query": "not_configured",
+      "tool": "query-nearby-stores",
+      "source": "https://open.mcd.cn/mcp",
+      "test_location": "北京西站（公开地标）",
+      "scope": "public-fixed-inputs-only",
+      "transactions_attempted": 0
+    },
+    {
+      "provider": "luckin",
+      "configured": false,
+      "discovery": "not_configured",
+      "query": "not_configured",
+      "tool": "queryShopList",
+      "source": "https://open.lkcoffee.com/mcp",
+      "test_location": "北京公开固定测试坐标 116.397128,39.916527；非用户定位",
+      "scope": "public-fixed-inputs-only",
+      "transactions_attempted": 0
+    },
+    {
+      "provider": "didi",
+      "configured": false,
+      "discovery": "not_configured",
+      "query": "not_configured",
+      "tool": "maps_textsearch",
+      "source": "https://mcp.didichuxing.com/",
+      "test_location": "北京西站（公开地标）",
+      "scope": "public-fixed-inputs-only",
+      "transactions_attempted": 0
+    }
+  ],
+  "note": "discovery=passed 仅表示目录可读；query=passed 才表示本次公开输入返回了可识别的非空结果。未验证下单、支付、私人地址或订单。"
+}

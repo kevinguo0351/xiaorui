@@ -8,6 +8,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from app import read_only
+from app.progress import tool_activity
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -269,10 +270,18 @@ class AgentService:
 
     async def _run(self, owner, session, text, events, trace):
         async def dispatch(name, arguments):
-            result = await self._tool(session, owner, name, arguments, events)
+            notify(tool_activity(name))
+            started = time.monotonic()
+            try:
+                result = await self._tool(session, owner, name, arguments, events)
+            finally:
+                trace.append({'type': 'timing', 'stage': 'tool',
+                              'name': name if name in SCHEMAS else 'unknown',
+                              'elapsed_ms': round((time.monotonic() - started) * 1000)})
             self.store.save_session(owner, session.snapshot())
             if isinstance(result, dict) and 'error' in result:
                 trace.append({'type': 'tool.error', 'name': name})
+            notify({'type': 'progress', 'stage': 'answer', 'text': '正在整理这一步的结果，您可以继续补充'})
             return result
 
         async def context(request):
@@ -291,25 +300,36 @@ class AgentService:
         key = f'xiaorui:{owner_key}:{session.conversation_id}:e{session.forget_epoch}'
         bot = build_runtime(self._config(), self.data_dir / 'runtime', dispatch, context)
         result = None
+        started = time.monotonic()
+        first_text = True
+        notify({'type': 'progress', 'stage': 'understanding', 'text': '收到，正在理解您的意思'})
         async with bot:
             media_kwargs = {'media': contact_media.get()} if contact_media.get() else {}
             async for event in bot.stream(text, session_key=key, **media_kwargs):
                 if event.type == 'text.delta':
+                    if first_text:
+                        first_text = False
+                        trace.append({'type': 'timing', 'stage': 'first_text',
+                                      'elapsed_ms': round((time.monotonic() - started) * 1000)})
                     notify({'type': 'delta', 'text': event.delta})
-                elif event.type == 'tool.started':
-                    notify({'type': 'progress', 'text': '正在查询或准备方案，您可以继续补充。'})
                 if event.type in {'run.started', 'tool.started', 'tool.completed', 'tool.failed', 'run.completed'}:
                     trace.append({'type': event.type, **({'name': event.name} if event.name else {})})
                 if event.type == 'run.completed':
                     result = event.result
+        trace.append({'type': 'timing', 'stage': 'runtime_including_tools',
+                      'elapsed_ms': round((time.monotonic() - started) * 1000)})
         if result is not None and result.error and 'SetLimitExceeded' in str(result.error):
             raise AgentError('豆包模型已达到账号用量上限，服务暂时暂停。请家人在火山方舟控制台核对额度后再试；已接收的消息不会自动重试。', 503)
         if result is None or result.error or result.stop_reason != 'completed':
             raise AgentError('小瑞本次任务尚未完成，请查看已有结果后重试。')
         if not isinstance(result.content, str) or not result.content.strip():
             raise AgentError('小瑞暂时没有生成回复，请重试。')
+        notify({'type': 'progress', 'stage': 'narration', 'text': '回复已生成，正在整理成简短的话'})
+        started = time.monotonic()
         session.speech_turn = await self.speech.compose(
             self._config(), text, result.content.strip(), events, session.display)
+        trace.append({'type': 'timing', 'stage': 'speech_composition',
+                      'elapsed_ms': round((time.monotonic() - started) * 1000)})
         return result.content.strip()
 
     def _answer(self, owner, session, text, answer, events, trace, task_id, conversation_reset=False):

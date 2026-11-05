@@ -20,3 +20,17 @@
 .app>header{position:fixed;top:0;left:0;right:0;z-index:10;max-width:none;height:calc(76px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) 32px 0;background:#fff;border-bottom:1px solid #eef0f1}
 .app.empty{padding-top:calc(76px + env(safe-area-inset-top,0px))}
 @media(max-width:760px){.app,.app.empty{padding-top:calc(66px + env(safe-area-inset-top,0px))}.app>header{height:calc(66px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) 20px 0}}
+
+/* A small, truthful status stays beside the familiar chat input. */
+.activity-strip{max-width:800px;margin:0 auto 10px;display:flex;align-items:center;gap:14px;padding:12px 16px;border:1px solid #e6e9e7;border-radius:14px;background:#fafbf9;color:#4b5750}
+.activity-copy{flex:1;min-width:0;line-height:1.55}.activity-copy strong{display:block;font-size:18px;font-weight:600;color:#344d3e}.activity-copy>span{display:block;font-size:16px}.activity-active{background:#f2f7f3;border-color:#dce7df}.activity-copy .activity-notice{margin-top:4px;color:#59655e;font-size:15px}.activity-strip button{min-height:56px;flex-shrink:0;padding:10px 16px;font-size:18px}.stop-playback,.cancel-recording{background:#fff;color:#85443c;border-color:#dfc9c4}.call-bar .hangup{min-height:56px;font-size:18px}.wechat-composer .mode-switch{min-width:56px;width:56px;height:56px;min-height:56px}.wechat-composer .send{min-height:56px;height:56px}.wechat-composer .record-line{min-height:56px}.greeting p{max-width:360px;line-height:1.8;font-size:20px;color:#707b74;margin-bottom:0}.conversation{padding-bottom:270px}.app:has(.call-bar) .conversation{padding-bottom:390px}.app:has(.composer-extras) .conversation{padding-bottom:410px}.app:has(.attachment-tray) .conversation{padding-bottom:380px}.empty .welcome{padding-bottom:100px}.composer-wrap{padding-top:14px}
+@media(max-width:760px){.activity-strip{gap:10px;padding:10px 12px;align-items:flex-start}.activity-copy strong{font-size:17px}.activity-copy>span{font-size:15px}.activity-strip button{font-size:16px;padding:10px 12px}.wechat-composer .mode-switch{width:56px;height:56px;padding:12px}.wechat-composer .record-caption{font-size:18px}.greeting p{font-size:18px}.conversation{padding-bottom:290px}.app:has(.call-bar) .conversation{padding-bottom:430px}.app:has(.composer-extras) .conversation{padding-bottom:430px}.app:has(.attachment-tray) .conversation{padding-bottom:420px}}
+@media(max-width:380px){.activity-strip{flex-wrap:wrap}.activity-strip button{margin-left:auto}.wechat-composer{gap:4px}.wechat-composer .mode-switch{width:56px;min-width:56px}.wechat-composer .record-caption{font-size:16px}}
+
+.activity-copy .activity-transcript{max-height:88px;overflow:auto;white-space:pre-wrap;color:#44554a}
+.app:has(.composer-wrap) .conversation{padding-bottom:calc(var(--composer-height,260px) + 28px)}
+.app.empty{padding-bottom:var(--composer-height,230px)}
+.empty .welcome{min-height:0;padding:28px 0;flex:1}
+
+.call-bar{flex-wrap:wrap}.call-bar>.call-controls{display:flex;gap:10px;flex:0 0 auto;align-items:center}.call-controls button{min-height:56px;font-size:18px}.call-bar>div:first-of-type{flex-basis:150px}
+@media(max-width:560px){.call-bar>.call-controls{flex-basis:100%;justify-content:flex-end}}
