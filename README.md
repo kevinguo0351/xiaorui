@@ -12,6 +12,8 @@
 
 原始文件：[面试任务原文](docs/original-task.md)。产品理想态是后续扩展，不能冒充原题的额外评分要求。
 
+从零在新 Mac 接手、Poki 真机准备、Tailscale 边界和 GPT Live 式实时语音升级，见 **[完整 Mac Handoff](HANDOFF_MAC.md)**。该文区分已有功能和待开发能力；不代表已在用户 Mac 或手机验收。
+
 ## 本地运行
 
 需要 macOS、Python 3.12、[uv](https://docs.astral.sh/uv/)；构建前端需要 Node.js/npm。
