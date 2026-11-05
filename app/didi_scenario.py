@@ -34,6 +34,7 @@ class Cancel(Order):
 
 
 SCHEMAS = {
+    'didi_current_location': (Args, '读取用户刚授权的浏览器定位作为本轮起点候选，不能当作家。必须向用户确认平台实际上车点；过期或未授权时询问地标。'),
     'didi_search_places': (Place, '在北京搜索本次起点或目的地。起点必须来自本轮真实定位或用户陈述，家可来自明确保存的地址。'),
     'didi_estimate_ride': (Route, '用户确认本轮起终点后查询真实车型估价，同时说明平台实际接送点可能与原地点不同。'),
     'didi_prepare_ride': (Ride, '用户选定车型后准备待确认叫车方案，不发单。会提示免密扣款、真实上车点和估价。'),
@@ -93,9 +94,10 @@ def clean_order(data):
 class DidiScenario:
     schemas = SCHEMAS
 
-    def __init__(self, transactions, provider=None):
+    def __init__(self, transactions, provider=None, location_provider=None):
         self.transactions = transactions
         self.provider = provider or OfficialMcp('didi')
+        self.location_provider = location_provider
 
     def _order(self, owner, action_id):
         plan = self.transactions.get(owner, action_id)
@@ -123,6 +125,8 @@ class DidiScenario:
                     'comparison':{'order_id':request['order_id'],'reason':request['reason'],'cancel_fee_cents':amount}}
         if action != 'create':
             raise ServiceUnavailable('不支持这个操作。')
+        if request.get('location_expires_at',float('inf')) < time.time():
+            raise ServiceUnavailable('起点定位已过期，请重新定位并核对上车点，没有发起叫车。')
         data = await self.provider.call('taxi_estimate', request['route'])
         return self._create_quote(request, data)
 
@@ -168,6 +172,19 @@ class DidiScenario:
         try:
             args = self.schemas[name][0].model_validate(arguments)
             state = session.services.setdefault('didi', {})
+            if name == 'didi_current_location':
+                point=self.location_provider(owner) if self.location_provider else None
+                if not point:
+                    return {'error':'没有当前有效定位，请点击定位授权，或说出附近地标。'}
+                if not (115.4<=point['longitude']<=117.6 and 39.4<=point['latitude']<=41.1):
+                    return {'error':'定位不在北京附近，当前叫车仅支持北京。请提供北京起点地标，不能假装在北京。'}
+                self.transactions.invalidate_pending(owner)
+                state.pop('estimate',None);state.pop('route',None)
+                state['origin']=[{'display_name':'本次浏览器定位附近（上车点待核对）',
+                    'location':{'lng':point['longitude'],'lat':point['latitude']},
+                    'location_expires_at':point['received_at']+120}]
+                return {'places':[dict(state['origin'][0],index=1)],'purpose':'origin',
+                    'accuracy_meters':point['accuracy'],'next':'这是定位附近，不是精确上车点。确认使用这里作起点后再估价，并核对平台实际接送点。'}
             if name == 'didi_search_places':
                 self.transactions.invalidate_pending(owner)
                 state.pop(args.purpose, None); state.pop('estimate', None); state.pop('route', None)
@@ -181,6 +198,8 @@ class DidiScenario:
                 self.transactions.invalidate_pending(owner)
                 state.pop('estimate',None); state.pop('route',None)
                 origin=choose(state.get('origin'),args.origin_index)
+                if origin.get('location_expires_at',float('inf')) < time.time():
+                    raise ValueError('起点定位已过期，请重新定位或提供地标。')
                 destination=choose(state.get('destination'),args.destination_index)
                 route={}
                 for prefix,place in [('from',origin),('to',destination)]:
@@ -189,6 +208,7 @@ class DidiScenario:
                 if not isinstance(data,dict) or not isinstance(data.get('items'),list) or not data['items']:
                     raise ServiceUnavailable('没有可用车型或报价。')
                 state.update(route=route,estimate={
+                    'location_expires_at':origin.get('location_expires_at'),
                     'items': copy.deepcopy(data['items'][:10]),
                     'traceId': data.get('traceId'), 'from': copy.deepcopy(data.get('from')),
                     'to': copy.deepcopy(data.get('to')), 'received_at': time.time()})
@@ -197,6 +217,10 @@ class DidiScenario:
             if name == 'didi_prepare_ride':
                 selected=choose((state.get('estimate') or {}).get('items'),args.vehicle_index)
                 request={'route':state['route'],'product_category':str(selected['productCategory'])}
+                expiry=(state.get('estimate') or {}).get('location_expires_at')
+                if expiry is not None and expiry!=float('inf'):
+                    request['location_expires_at']=expiry
+                    if expiry<time.time():raise ValueError('起点定位已过期，请重新定位。')
                 # Reuse this turn's recent estimate for the selection card.
                 # Host confirmation still calls quote() for a fresh estimate.
                 cached=state['estimate']

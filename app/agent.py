@@ -22,6 +22,7 @@ from app.life_services import connection_status
 from app.actions import ActionManager, ActionError
 from app.didi_scenario import DidiScenario
 from app.mcd_scenario import McdScenario
+from app.location import LocationStore
 from app.luckin_scenario import LuckinScenario
 from app.contact_events import notify, contact_media
 from app.speech import SpeechComposer, context as speech_context, fallback as speech_fallback
@@ -112,8 +113,9 @@ class AgentService:
                 return True
         self.actions = ActionManager(self.data_dir / 'actions.sqlite3',
                                      external_blocks=external_block if data_dir is None else None)
+        self.locations = LocationStore()
         self.scenarios = {
-            'didi':DidiScenario(self.actions, self.life_skills.didi),
+            'didi':DidiScenario(self.actions, self.life_skills.didi, self.locations.get),
             'mcd':McdScenario(self.actions, service),
             'luckin':LuckinScenario(self.actions, self.life_skills.luckin),
         }

@@ -118,6 +118,26 @@ class ChatRequest(Body):
     text: str = Field(min_length=1, max_length=2000, strict=True)
 
 
+from app.location import BrowserLocation
+
+
+@app.post('/api/location')
+async def set_location(body: BrowserLocation, request: Request):
+    try:
+        agent.locations.put(request.state.owner,body)
+    except ValueError as exc:
+        raise HTTPException(422,str(exc)) from None
+    agent.actions.invalidate_pending(request.state.owner)
+    return {'ok':True,'expires_in':120,'accuracy':body.accuracy}
+
+
+@app.delete('/api/location')
+async def clear_location(request: Request):
+    agent.locations.clear(request.state.owner)
+    agent.actions.invalidate_pending(request.state.owner)
+    return {'ok':True}
+
+
 class ContactMessage(ChatRequest):
     client_id: str = Field(min_length=8, max_length=80, pattern=r'^[a-zA-Z0-9_-]+$')
     image_ids: list[str] = Field(default_factory=list,max_length=4)

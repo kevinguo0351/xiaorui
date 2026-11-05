@@ -8,16 +8,19 @@ import asyncio
 import base64
 import json
 import os
+import secrets
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
 from dotenv import dotenv_values
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from websockets.asyncio.client import connect
+from starlette.background import BackgroundTask
 
 from app.voice_protocol import encode_request, decode_response
 
@@ -179,40 +182,108 @@ def tts_chunk(line: str) -> bytes:
     return base64.b64decode(audio, validate=True) if audio else b''
 
 
+async def speech_audio(text, cfg):
+    """Forward validated MP3 chunks immediately; never buffer a full utterance."""
+    async with asyncio.timeout(45):
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
+            async with client.stream('POST', TTS_URL, headers=headers(cfg, cfg['tts_resource']),
+                                     json={'req_params': {'text': text, 'speaker': cfg['voice'],
+                                                          'audio_params': {'format': 'mp3', 'sample_rate': 24000,
+                                                                           'speech_rate': -10}}}) as response:
+                response.raise_for_status()
+                pending, received, audio_size = b'', 0, 0
+                completed = False
+                async for chunk in response.aiter_bytes():
+                    received += len(chunk)
+                    if received > MAX_TTS_BYTES * 2:
+                        raise ValueError('Speech response too large')
+                    pending += chunk
+                    while b'\n' in pending:
+                        line, pending = pending.split(b'\n', 1)
+                        line = line.strip()
+                        if not line or line.startswith((b'event:', b':')):
+                            continue
+                        audio = tts_chunk(line.decode())
+                        payload = json.loads(line[5:].strip() if line.startswith(b'data:') else line)
+                        completed = completed or payload.get('code') == 20000000
+                        audio_size += len(audio)
+                        if audio_size > MAX_TTS_BYTES:
+                            raise ValueError('Speech audio too large')
+                        if audio:
+                            yield audio
+                    if len(pending) > MAX_TTS_BYTES * 2:
+                        raise ValueError('Speech response too large')
+                if pending.strip():
+                    line = pending.strip()
+                    audio = tts_chunk(line.decode())
+                    payload = json.loads(line[5:].strip() if line.startswith(b'data:') else line)
+                    completed = completed or payload.get('code') == 20000000
+                    audio_size += len(audio)
+                    if audio_size > MAX_TTS_BYTES:
+                        raise ValueError('Speech audio too large')
+                    if audio:
+                        yield audio
+                if not audio_size or not completed:
+                    raise ValueError('Speech provider ended without complete audio')
+
+
+# A native audio element can play chunked MP3 in Chrome and Safari. Text stays
+# in the POST body, never in a URL; tickets are short-lived, owner-bound and single-use.
+_speech_tickets = {}
+TICKET_SECONDS = 45
+
+
+@router.post('/tts/prepare')
+async def prepare_speech(body: SpeechRequest, request: Request):
+    if not config()['key']:
+        raise HTTPException(503, '请先配置豆包语音 API Key。')
+    now = time.monotonic()
+    for token, entry in list(_speech_tickets.items()):
+        if entry['expires'] <= now:
+            _speech_tickets.pop(token, None)
+    owner = request.state.owner
+    if len(_speech_tickets) >= 128 or sum(e['owner'] == owner for e in _speech_tickets.values()) >= 4:
+        raise HTTPException(429, '语音请求较多，请稍后再试。')
+    token = secrets.token_urlsafe(32)
+    _speech_tickets[token] = {'owner': owner, 'text': body.text, 'expires': now + TICKET_SECONDS}
+    asyncio.get_running_loop().call_later(TICKET_SECONDS, lambda: _speech_tickets.pop(token, None))
+    return {'url': '/api/voice/tts/stream/' + token}
+
+
+@router.get('/tts/stream/{token}')
+async def stream_speech(token: str, request: Request):
+    entry = _speech_tickets.get(token)
+    if not entry or entry['owner'] != request.state.owner or entry['expires'] <= time.monotonic():
+        raise HTTPException(404, '这段语音已失效，请重新点击播报。')
+    _speech_tickets.pop(token, None)
+    stream = speech_audio(entry['text'], config())
+    try:
+        first = await anext(stream)
+    except Exception:
+        await stream.aclose()
+        raise HTTPException(502, '语音播报暂时不可用，文字消息已保留。') from None
+
+    async def body():
+        try:
+            yield first
+            async for chunk in stream:
+                yield chunk
+        finally:
+            await stream.aclose()
+    return StreamingResponse(body(), media_type='audio/mpeg',
+                             headers={'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no'},
+                             background=BackgroundTask(stream.aclose))
+
+
 @router.post('/tts')
 async def synthesize(body: SpeechRequest):
     cfg = config()
     if not cfg['key']:
         raise HTTPException(503, '请先配置豆包语音 API Key。')
     try:
-        async with asyncio.timeout(45):
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10)) as client:
-                async with client.stream('POST', TTS_URL, headers=headers(cfg, cfg['tts_resource']),
-                                         json={'req_params': {'text': body.text, 'speaker': cfg['voice'],
-                                                              'audio_params': {'format': 'mp3', 'sample_rate': 24000,
-                                                                               'speech_rate': -10}}}) as response:
-                    response.raise_for_status()
-                    audio = bytearray()
-                    pending = b''
-                    received = 0
-                    async for chunk in response.aiter_bytes():
-                        received += len(chunk)
-                        if received > MAX_TTS_BYTES * 2:
-                            raise ValueError('Speech response too large')
-                        pending += chunk
-                        while b'\n' in pending:
-                            line, pending = pending.split(b'\n', 1)
-                            line = line.strip()
-                            if line and not line.startswith((b'event:', b':')):
-                                audio.extend(tts_chunk(line.decode()))
-                            if len(audio) > MAX_TTS_BYTES:
-                                raise ValueError('Speech audio too large')
-                        if len(pending) > MAX_TTS_BYTES * 2:
-                            raise ValueError('Speech response too large')
-                    if pending.strip():
-                        audio.extend(tts_chunk(pending.decode().strip()))
-                    if not audio or len(audio) > MAX_TTS_BYTES:
-                        raise ValueError('Speech provider returned no valid audio')
-                    return Response(bytes(audio), media_type='audio/mpeg', headers={'Cache-Control': 'no-store'})
+        audio = bytearray()
+        async for chunk in speech_audio(body.text, cfg):
+            audio.extend(chunk)
+        return Response(bytes(audio), media_type='audio/mpeg', headers={'Cache-Control': 'no-store'})
     except Exception:
         raise HTTPException(502, '语音播报暂时不可用，请检查语音服务权限或网络后重试。') from None

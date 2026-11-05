@@ -169,7 +169,10 @@ def fallback(data):
             options=data['choices'][:5] if re.search(r'念|读|看不[清见]|不看屏幕',data['user']) else data['choices'][:2]
             text='我帮您看了一下。'+'；'.join(c['label']+'，'+c['detail'] for c in options)+'。您想选哪一个？'
         return {'text':text,'source':'fallback','stage':stage}
-    answer=clean(data['screen_answer'])
+    raw=data['screen_answer']
+    # Paragraph breaks alone don't require another model generation.
+    structured=bool(re.search(r'(?m)^\s*(?:[-*]\s|\d+[.)、]\s|#{1,6}\s)|\|',raw))
+    answer=re.sub(r'\s+',' ',clean(raw)).strip() if not structured else clean(raw)
     if len(answer)<=120 and not re.search(r'\n|[{}]|(?:running|completed|awaiting_confirmation)',answer) and valid(answer,data):
         return {'text':answer,'source':'brief','stage':stage}
     first=re.search(r'(?m)^\s*(?:\d+[.)、]|[-*])\s*([^\n]+)',data['screen_answer'])
