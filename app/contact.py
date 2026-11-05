@@ -11,7 +11,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.agent import AgentError
-from app.contact_events import contact_observer, contact_media
+from app.contact_events import contact_observer, contact_media, contact_call
 
 CONFIRMATIONS = {'确认叫车', '确认下单', '确认取消', '确认新增地址'}
 
@@ -30,6 +30,9 @@ class ContactService:
             db.execute('CREATE INDEX IF NOT EXISTS contact_owner ON events(owner, id)')
             if 'images' not in {r[1] for r in db.execute('PRAGMA table_info(inbox)')}:
                 db.execute("ALTER TABLE inbox ADD COLUMN images TEXT NOT NULL DEFAULT '[]'")
+            if 'call_id' not in {r[1] for r in db.execute('PRAGMA table_info(inbox)')}:
+                db.execute('ALTER TABLE inbox ADD COLUMN call_id TEXT')
+            db.execute('CREATE TABLE IF NOT EXISTS calls (id TEXT PRIMARY KEY, owner TEXT NOT NULL, started REAL NOT NULL, ended REAL, duration INTEGER)')
         self.path.chmod(0o600)
 
     def db(self):
@@ -40,12 +43,40 @@ class ContactService:
             cursor = db.execute('INSERT INTO events(owner,payload) VALUES (?,?)', (owner, json.dumps(event, ensure_ascii=False)))
             return cursor.lastrowid
 
+    def start_call(self, owner):
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            old = db.execute('SELECT id,started FROM calls WHERE owner=? AND ended IS NULL', (owner,)).fetchone()
+            if old:
+                return {'id': old[0], 'started_at': old[1]}
+            call = {'id': str(uuid4()), 'started_at': time.time()}
+            db.execute('INSERT INTO calls(id,owner,started) VALUES (?,?,?)', (call['id'], owner, call['started_at']))
+        return call
+
+    def end_call(self, owner, call_id):
+        with self.db() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT started,ended,duration FROM calls WHERE id=? AND owner=?', (call_id, owner)).fetchone()
+            if row is None:
+                raise AgentError('找不到这次通话。', 404)
+            ended = row[1] if row[1] is not None else time.time()
+            duration = row[2] if row[2] is not None else max(0, int(ended-row[0]))
+            result = {'id': call_id, 'started_at': row[0], 'ended_at': ended, 'duration_seconds': duration}
+            if row[1] is None:
+                db.execute('UPDATE calls SET ended=?,duration=? WHERE id=?', (ended, duration, call_id))
+                db.execute('INSERT INTO events(owner,payload) VALUES (?,?)', (owner, json.dumps({'type':'call_ended','call':result})))
+        return result
+
     def recover(self):
         with self.db() as db:
-            rows = db.execute("SELECT id,owner FROM inbox WHERE status IN ('queued','running')").fetchall()
+            rows = db.execute("SELECT id,owner,call_id FROM inbox WHERE status IN ('queued','running')").fetchall()
             db.execute("UPDATE inbox SET status='interrupted' WHERE status IN ('queued','running')")
-        for mid, owner in rows:
-            self.emit(owner, {'type': 'failed', 'message_id': mid, 'text': '服务已重启，这条消息未自动重试；请先核对已有结果。'})
+        for mid, owner, call_id in rows:
+            self.emit(owner, {'type': 'failed', 'message_id': mid, **({'call_id':call_id} if call_id else {}), 'text': '服务已重启，这条消息未自动重试；请先核对已有结果。'})
+        with self.db() as db:
+            calls = db.execute('SELECT owner,id FROM calls WHERE ended IS NULL').fetchall()
+        for owner, call_id in calls:
+            self.end_call(owner, call_id)
 
     def events(self, owner, after=0):
         with self.db() as db:
@@ -57,12 +88,14 @@ class ContactService:
             cursor = db.execute('SELECT coalesce(max(id),0) FROM events WHERE owner=?', (owner,)).fetchone()[0]
             rows = db.execute("SELECT id,payload FROM events WHERE owner=? AND json_extract(payload,'$.type') NOT IN ('delta','progress','started') ORDER BY id DESC LIMIT 160", (owner,)).fetchall()
             pending = db.execute("SELECT count(*) FROM inbox WHERE owner=? AND status IN ('queued','running')", (owner,)).fetchone()[0]
+            active = db.execute('SELECT id,started FROM calls WHERE owner=? AND ended IS NULL', (owner,)).fetchone()
         # Token deltas are ephemeral in the UI; replay only authoritative results.
         return {'events': [{'cursor': r[0], **json.loads(r[1])} for r in reversed(rows)
                            if json.loads(r[1])['type'] not in {'delta','progress','started'}],
-                'cursor': cursor, 'pending': pending}
+                'cursor': cursor, 'pending': pending,
+                'active_call': {'id':active[0], 'started_at':active[1]} if active else None}
 
-    def enqueue(self, owner, text, client_id, image_ids=None):
+    def enqueue(self, owner, text, client_id, image_ids=None, call_id=None):
         image_ids=image_ids or []
         if len(image_ids)>4:
             raise AgentError('每条消息最多发送四张图片。',400)
@@ -79,6 +112,8 @@ class ContactService:
             old = db.execute('SELECT id FROM inbox WHERE owner=? AND client_id=?', (owner, client_id)).fetchone()
             if old:
                 return {'message_id': old[0], 'accepted': True}
+            if call_id and not db.execute('SELECT 1 FROM calls WHERE id=? AND owner=? AND ended IS NULL', (call_id, owner)).fetchone():
+                raise AgentError('这次通话已经结束，请重新拨打或发送文字消息。', 409)
             if db.execute("SELECT count(*) FROM inbox WHERE owner=? AND status IN ('queued','running')", (owner,)).fetchone()[0] >= 20:
                 raise AgentError('待处理消息较多，请稍等片刻。', 429)
             if sum(not t.done() for t in self.workers.values()) >= 64 and (owner not in self.workers or self.workers[owner].done()):
@@ -87,10 +122,10 @@ class ContactService:
             plan = self.agent.actions.pending(owner) if phrase in CONFIRMATIONS and not image_ids else None
             confirmation = json.dumps([plan['id'], plan['version']]) if plan else '[]'
             mid = str(uuid4())
-            db.execute('INSERT INTO inbox (id,owner,client_id,text,status,confirmation,created,images) VALUES (?,?,?,?,?,?,?,?)',
-                       (mid, owner, client_id, text.strip(), 'queued', confirmation, time.time(),json.dumps(image_ids)))
+            db.execute('INSERT INTO inbox (id,owner,client_id,text,status,confirmation,created,images,call_id) VALUES (?,?,?,?,?,?,?,?,?)',
+                       (mid, owner, client_id, text.strip(), 'queued', confirmation, time.time(),json.dumps(image_ids),call_id))
             db.execute('INSERT INTO events(owner,payload) VALUES (?,?)', (owner, json.dumps(
-                {'type': 'accepted', 'message_id': mid, 'client_id': client_id, 'text': text.strip(),
+                {'type': 'accepted', 'message_id': mid, 'client_id': client_id, 'text': text.strip(), **({'call_id':call_id} if call_id else {}),
                  'images':[{'id':i,'url':f'/api/contact/images/{i}'} for i in image_ids]}, ensure_ascii=False)))
         # A correction invalidates an old approval immediately, before its turn.
         if phrase not in CONFIRMATIONS or image_ids:
@@ -117,13 +152,13 @@ class ContactService:
             # Briefly collect consecutive fragments, keeping confirmations separate.
             await asyncio.sleep(.35)
             with self.db() as db:
-                rows = db.execute("SELECT id,text,confirmation,images FROM inbox WHERE owner=? AND status='queued' ORDER BY created,rowid", (owner,)).fetchall()
+                rows = db.execute("SELECT id,text,confirmation,images,call_id FROM inbox WHERE owner=? AND status='queued' ORDER BY created,rowid", (owner,)).fetchall()
                 if not rows:
                     return
                 batch = []
                 for row in rows:
                     confirm = row[1].rstrip('。！!，, ') in CONFIRMATIONS
-                    if batch and (confirm or json.loads(row[3]) or json.loads(batch[0][3]) or batch[0][1].rstrip('。！!，, ') in CONFIRMATIONS or sum(len(r[1])+1 for r in batch)+len(row[1]) > 2000):
+                    if batch and (row[4] != batch[0][4] or confirm or json.loads(row[3]) or json.loads(batch[0][3]) or batch[0][1].rstrip('。！!，, ') in CONFIRMATIONS or sum(len(r[1])+1 for r in batch)+len(row[1]) > 2000):
                         break
                     batch.append(row)
                     if confirm:
@@ -132,10 +167,12 @@ class ContactService:
                     db.execute("UPDATE inbox SET status='running' WHERE id=?", (row[0],))
             ids = [r[0] for r in batch]
             run = ids[0]
-            self.emit(owner, {'type': 'started', 'message_id': run, 'message_ids': ids})
-            token = contact_observer.set(lambda event: self.emit(owner, {'message_id': run, **event})
+            channel = {'call_id':batch[0][4]} if batch[0][4] else {}
+            self.emit(owner, {'type': 'started', 'message_id': run, 'message_ids': ids, **channel})
+            token = contact_observer.set(lambda event: self.emit(owner, {'message_id': run, **event, **channel})
                                          if not self.has_pending(owner) else None)
             media_token=contact_media.set(None)
+            call_token=contact_call.set(batch[0][4])
             try:
                 if self.images:
                     contact_media.set([self.images.resolve(owner,mid) for r in batch for mid in json.loads(r[3])])
@@ -145,6 +182,9 @@ class ContactService:
                     await asyncio.sleep(.05)
                 response = await self.agent.chat(owner, '\n'.join(r[1] for r in batch),
                                                  expected_confirmation=json.loads(batch[0][2]))
+                if batch[0][4]:
+                    from app.speech import call_card_cue
+                    response = {**response, 'speech_text': call_card_cue(response)}
                 stale = self.has_pending(owner)
                 if response.get('conversation_reset'):
                     with self.db() as db:
@@ -153,20 +193,21 @@ class ContactService:
                 if stale:
                     self.invalidate_previous(owner)
                 self.emit(owner, {'type': 'completed', 'message_id': run, 'message_ids': ids,
-                                  'response': response, 'superseded': stale})
+                                  'response': response, 'superseded': stale, **channel})
                 status = 'completed'
             except asyncio.CancelledError:
                 self.emit(owner, {'type': 'failed', 'message_id': run, 'message_ids': ids,
-                                  'text': '处理已中断，请核对已有结果；没有自动重试。'})
+                                  'text': '处理已中断，请核对已有结果；没有自动重试。', **channel})
                 status = 'interrupted'
                 raise
             except Exception as exc:
                 status = 'failed'
                 self.emit(owner, {'type': 'failed', 'message_id': run, 'message_ids': ids,
-                                  'text': exc.message if isinstance(exc, AgentError) else '这次处理未完成，请检查连接后重试；已有操作不会自动重放。'})
+                                  'text': exc.message if isinstance(exc, AgentError) else '这次处理未完成，请检查连接后重试；已有操作不会自动重放。', **channel})
             finally:
                 contact_observer.reset(token)
                 contact_media.reset(media_token)
+                contact_call.reset(call_token)
                 with self.db() as db:
                     for mid in ids:
                         db.execute('UPDATE inbox SET status=? WHERE id=?', (status, mid))

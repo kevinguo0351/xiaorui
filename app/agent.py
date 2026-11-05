@@ -26,7 +26,7 @@ from app.didi_scenario import DidiScenario
 from app.mcd_scenario import McdScenario
 from app.location import LocationStore
 from app.luckin_scenario import LuckinScenario
-from app.contact_events import notify, contact_media
+from app.contact_events import notify, contact_media, contact_call
 from app.speech import SpeechComposer, context as speech_context, fallback as speech_fallback
 
 
@@ -292,7 +292,9 @@ class AgentService:
             return result
 
         async def context(request):
-            return [data_context('capability_policy', {'read_only': read_only.READ_ONLY, 'message': read_only.MESSAGE if read_only.READ_ONLY else '依实际工具能力执行'}),
+            return [data_context('conversation_channel', {'mode':'phone' if contact_call.get() else 'chat',
+                    'guidance':'正在实时电话通话。像真人打电话一样简短承接用户的话；主动问一个推进当前事情所必需的问题，不重复已知条件。需要选择时发真实卡片，并说我给您发了卡片，选好告诉我。不要假设用户正在看屏幕；可语音解释选项。通话不改变真实交易确认规则。' if contact_call.get() else '普通消息聊天。自然承接上下文，必要时主动问一个问题，不机械追加问句。'}),
+                    data_context('capability_policy', {'read_only': read_only.READ_ONLY, 'message': read_only.MESSAGE if read_only.READ_ONLY else '依实际工具能力执行'}),
                     data_context('canonical_profile', self.store.model_profile()),
                     data_context('service_candidates', model_safe(session.services)),
                     data_context('recent_actions', model_safe([self.actions.public(p) for p in self.actions.list(owner)[:8]])),

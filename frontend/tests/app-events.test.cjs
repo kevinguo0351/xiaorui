@@ -3,15 +3,15 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm'),ts=require('typescript');
 const React=require('react');
 const code=ts.transpileModule(fs.readFileSync(require.resolve('../src/main.tsx'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
-function harness(){
+function harness(options={}){
  const slots=[];let index=0,callbacks,source;
  const spoken=[];const requests=[];let cancellations=0;
- const voice={phase:'listening',inCall:true,recording:false,transcript:'',speaking:false,loadingSpeech:false,speak:async text=>spoken.push(text),stopSpeech(){},cancel(){},cancelRecording(){cancellations++;voice.phase='idle';voice.recording=false;},endCall(){}};
+ const voice={phase:'listening',inCall:true,recording:false,transcript:'',speaking:false,loadingSpeech:false,speak:async text=>spoken.push(text),stopSpeech(){},cancel(){},cancelRecording(){cancellations++;voice.phase='idle';voice.recording=false;},startCall:async()=>{voice.inCall=true;voice.phase='listening';return true;},endCall(){voice.inCall=false;voice.phase='idle';}};
  const hooks={...React,useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(value){const i=index++;if(!(i in slots))slots[i]={current:value};return slots[i];},useEffect(effect,deps){const i=index++;const old=slots[i];if(!old||!deps||deps.some((value,n)=>value!==old[n])){slots[i]=deps;effect();}}};
  class EventSource{constructor(){source=this;}close(){}}
  const module={exports:{}};
- const fetch=async (url,options)=>{requests.push({url,options});return{ok:true,headers:{get:()=> 'application/json'},json:async()=>url==='/api/health'?{mcd_configured:true,agent_configured:true}:url==='/api/contact/state'?{events:[],cursor:0,pending:0}:url==='/api/chat/history'?{messages:[]}:url==='/api/actions'?{actions:[]}: {accepted:true}};};
- vm.runInNewContext(code,{module,exports:module.exports,require:name=>name==='react'?hooks:name==='react-dom/client'?{createRoot:()=>({render(){}})}:name==='./useVoice'?{useVoice:(onFinal,onError,onSpeechStart)=>{callbacks={onFinal,onError,onSpeechStart};return voice;}}:name==='./Companion'?{Companion(){},CompanionAvatar(){},companionMood:()=> 'idle'}:name==='./SettingsDialog'?{SettingsDialog(){},useCompanionSettings:()=>({settings:{name:'小瑞',avatar:'portrait'},updateSettings(){}})}:name==='./ProfileCard'?{ProfileCard(){}}:name==='./location'?{locate:async()=>10}:name==='./ActionCard'?{}:name.endsWith('.css')?{}:require(name),document:{getElementById:()=>({})},EventSource,fetch,crypto:require('node:crypto'),setInterval:()=>1,clearInterval(){},console});
+ const fetch=async (url,requestOptions)=>{requests.push({url,options:requestOptions});return{ok:true,headers:{get:()=> 'application/json'},json:async()=>url==='/api/health'?{mcd_configured:true,agent_configured:true}:url==='/api/contact/state'?{events:options.replay||[],cursor:0,pending:0}:url==='/api/chat/history'?{messages:[]}:url==='/api/actions'?{actions:[]}:url==='/api/contact/calls'?{id:'call-test-1',started_at:Date.now()/1000}:url.endsWith('/end')?{id:'call-test-1',started_at:Date.now()/1000-65,duration_seconds:65}: {accepted:true}};};
+ vm.runInNewContext(code,{module,exports:module.exports,require:name=>name==='react'?hooks:name==='react-dom/client'?{createRoot:()=>({render(){}})}:name==='./useVoice'?{useVoice:(onFinal,onError,onSpeechStart)=>{callbacks={onFinal,onError,onSpeechStart};return voice;}}:name==='./Companion'?{Companion(){},CompanionAvatar(){},companionMood:()=> 'idle'}:name==='./SettingsDialog'?{SettingsDialog(){},useCompanionSettings:()=>({settings:{name:'小瑞',avatar:'portrait'},updateSettings(){}})}:name==='./CallBar'?{CallBar(){},callDuration:s=>String(s)}:name==='./ProfileCard'?{ProfileCard(){}}:name==='./location'?{locate:async()=>10}:name==='./ActionCard'?{}:name.endsWith('.css')?{}:require(name),document:{getElementById:()=>({}),addEventListener(){},removeEventListener(){}},EventSource,fetch,crypto:require('node:crypto'),setInterval:()=>1,clearInterval(){},console});
  const render=()=>{index=0;return module.exports.App();};
  const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
  return{render,flush,spoken,voice,requests,get cancellations(){return cancellations;},get callbacks(){return callbacks;},emit:event=>source.onmessage({data:JSON.stringify(event)})};
@@ -85,4 +85,36 @@ test('original composer preserves Shift+Enter and IME, with conditional text sen
  await h.flush();assert.equal(h.requests.filter(r=>r.url==='/api/contact/messages').length,0);
  buttonByLabel(tree,'切换到语音输入').props.onClick();tree=h.render();assert.equal(all(tree,node=>node.type==='textarea').length,0);assert.ok(buttonByLabel(tree,'开始语音输入'));
  buttonByLabel(tree,'切换到文字输入').props.onClick();tree=h.render();assert.equal(box().props.value,'还在输入');assert.ok(buttonByLabel(tree,'更多功能'));
+});
+
+async function connectPhone(h){h.voice.inCall=false;h.voice.phase='idle';h.render();await h.flush();let tree=h.render();buttonByLabel(tree,'更多功能').props.onClick();tree=h.render();buttonByLabel(tree,'拨打语音电话').props.onClick();await h.flush();return h.render();}
+test('phone hides composer, speaks an opening question and routes spoken turns outside chat bubbles',async()=>{
+ const h=harness();let tree=await connectPhone(h);
+ assert.equal(all(tree,n=>n.type==='textarea').length,0);
+ assert.equal(all(tree,n=>n.type?.name==='CallBar').length,1);
+ assert.equal(all(tree,n=>n.props?.className==='call-bar').length,0);
+ assert.ok(h.spoken.some(text=>text.includes('聊点什么')));
+ h.callbacks.onFinal('今天想吃午饭');await h.flush();tree=h.render();
+ const request=h.requests.find(r=>r.url==='/api/contact/messages');assert.equal(JSON.parse(request.options.body).call_id,'call-test-1');
+ h.emit({type:'accepted',call_id:'call-test-1',message_id:'voice-1',client_id:'voice-1',text:'今天想吃午饭'});
+ h.emit({type:'delta',call_id:'call-test-1',message_id:'voice-1',text:'电话中不落气泡'});
+ tree=h.render();assert.equal(all(tree,n=>n.type==='article').length,0);
+});
+test('phone cards appear without transcripts; hangup restores typing and leaves one duration record',async()=>{
+ const h=harness();let tree=await connectPhone(h);const count=h.spoken.length;
+ h.emit({type:'started',call_id:'call-test-1',message_id:'a'});
+ h.emit({...reply('a','我给您发了餐品卡片',[{type:'meals',meals:[]}]),call_id:'call-test-1'});tree=h.render();
+ assert.equal(h.spoken.length,count+1);
+ assert.equal(all(tree,n=>n.type==='p'&&n.props.className==='message-text').length,0);
+ assert.equal(all(tree,n=>n.props?.className==='meal-grid').length,1);
+ all(tree,n=>n.type?.name==='CallBar')[0].props.onHangup();await h.flush();tree=h.render();assert.equal(all(tree,n=>n.type==='textarea').length,1);
+ assert.equal(all(tree,n=>n.props?.className==='phone-record').length,1);
+ const before=h.spoken.length;h.emit({...reply('late','挂断后的迟到回复'),call_id:'call-test-1'});tree=h.render();assert.equal(h.spoken.length,before);assert.equal(all(tree,n=>n.props?.className==='phone-record').length,1);
+});
+test('replayed call turns remain hidden and durable call summaries deduplicate',async()=>{
+ const record={id:'old-call',started_at:1000,duration_seconds:65};
+ const h=harness({replay:[{type:'accepted',call_id:'old-call',message_id:'old',text:'不显示的转录'}, {...reply('old','不显示的回复'),call_id:'old-call'},{type:'call_ended',call:record}]});
+ h.voice.inCall=false;h.voice.phase='idle';h.render();await h.flush();let tree=h.render();
+ assert.equal(all(tree,n=>n.props?.className==='phone-record').length,1);assert.equal(all(tree,n=>n.type==='p'&&n.props.className==='message-text').length,0);
+ h.emit({type:'call_ended',call:record});tree=h.render();assert.equal(all(tree,n=>n.props?.className==='phone-record').length,1);assert.deepEqual(h.spoken,[]);
 });

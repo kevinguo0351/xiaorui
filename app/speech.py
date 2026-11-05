@@ -35,6 +35,20 @@ def clean(text):
     return re.sub(r'[*`#]','',text).strip()
 
 
+def call_card_cue(response):
+    """Phone users hear where a real visual card went; keep confirmation facts."""
+    events = response.get('events') or []
+    kinds = {event.get('type') for event in events}
+    speech = response.get('speech_text') or response.get('text') or ''
+    if kinds & {'action_plan', 'plan'}:
+        return '我给您发了一张方案卡片。'+speech
+    if kinds & {'meals', 'service_choices', 'stores'}:
+        return '我给您发了可选的卡片，您选好告诉我；不方便看屏幕也可以让我念给您听。'+speech
+    if 'location_request' in kinds:
+        return '我给您发了定位授权入口，方便时点一下；也可以直接告诉我附近的地标。'+speech
+    return speech
+
+
 def flattened(value):
     if isinstance(value,list):
         return '、'.join(flattened(v) for v in value if flattened(v))

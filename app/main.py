@@ -68,7 +68,7 @@ async def local_boundary(request: Request, call_next):
     if request.method in {'POST', 'PUT', 'PATCH'} and not request.headers.get('content-type', '').startswith('application/json'):
         return JSONResponse({'detail': '请使用 JSON 请求。'}, status_code=415)
     if (read_only.READ_ONLY and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'}
-            and request.url.path not in read_only.QUERY_POSTS):
+            and not read_only.query_post(request.url.path)):
         return JSONResponse({'detail': read_only.MESSAGE}, status_code=403)
     session = request.cookies.get('pa_session')
     fresh = not session or len(session) < 32 or len(session) > 128
@@ -147,6 +147,7 @@ async def clear_location(request: Request):
 class ContactMessage(ChatRequest):
     client_id: str = Field(min_length=8, max_length=80, pattern=r'^[a-zA-Z0-9_-]+$')
     image_ids: list[str] = Field(default_factory=list,max_length=4)
+    call_id: str | None = Field(default=None, max_length=64, strict=True)
 
 
 class ImageUpload(Body):
@@ -166,7 +167,17 @@ async def read_image(image_id: str,request: Request):
 
 @app.post('/api/contact/messages', status_code=202)
 async def contact_message(body: ContactMessage, request: Request):
-    return contact.enqueue(request.state.owner, body.text, body.client_id, body.image_ids)
+    return contact.enqueue(request.state.owner, body.text, body.client_id, body.image_ids, body.call_id)
+
+
+@app.post('/api/contact/calls')
+async def start_contact_call(request: Request):
+    return contact.start_call(request.state.owner)
+
+
+@app.post('/api/contact/calls/{call_id}/end')
+async def end_contact_call(call_id: str, request: Request):
+    return contact.end_call(request.state.owner, call_id)
 
 
 @app.get('/api/contact/state')
