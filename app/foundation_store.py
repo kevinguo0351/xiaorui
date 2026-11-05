@@ -5,6 +5,7 @@ import secrets
 import sqlite3
 import time
 from pathlib import Path
+from app.profile_card import FIELDS, ProfileConflict, is_critical, validate_fields
 
 
 class FoundationStore:
@@ -20,6 +21,7 @@ class FoundationStore:
                 CREATE TABLE IF NOT EXISTS facts (key TEXT PRIMARY KEY, value TEXT, deleted INTEGER NOT NULL, updated_at REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS sessions (owner TEXT PRIMARY KEY, body TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, owner TEXT NOT NULL, body TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS confirmed_profile (key TEXT PRIMARY KEY, value TEXT NOT NULL, confirmed_at REAL NOT NULL);
             ''')
             db.execute('INSERT OR IGNORE INTO profile_meta VALUES (?,0,0)', (self.PROFILE_ID,))
         if recover_running:
@@ -96,11 +98,51 @@ class FoundationStore:
         rows = db.execute('SELECT key,value,deleted FROM facts ORDER BY key').fetchall()
         return {'profile_id': self.PROFILE_ID, **dict(meta),
                 'facts': {r['key']: r['value'] for r in rows if not r['deleted']},
-                'deleted_keys': [r['key'] for r in rows if r['deleted']]}
+                'deleted_keys': [r['key'] for r in rows if r['deleted']],
+                'confirmed_fields': {r['key']: r['value'] for r in db.execute('SELECT key,value FROM confirmed_profile WHERE value != \'\'')}}
+
+    def profile_card(self):
+        with self.connect() as db:
+            return self._card(db)
+
+    def _card(self, db):
+        profile = self._profile(db)
+        confirmed = {r['key']: dict(r) for r in db.execute('SELECT * FROM confirmed_profile')}
+        fields = []
+        for field in FIELDS:
+            row = confirmed.get(field['key'])
+            value = profile['facts'].get(field['key'], '')
+            fields.append({**field, 'value': value,
+                'confirmed_at': row['confirmed_at'] if row and row['value'] == value else None})
+        return {'version': profile['version'], 'fields': fields}
+
+    def save_profile_card(self, version, fields):
+        fields = validate_fields(fields)
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if type(version) is not int or version != self._profile(db)['version']:
+                raise ProfileConflict('资料已在其他页面更新，请重新打开资料卡核对后再保存。')
+            now = time.time()
+            for key, value in fields.items():
+                db.execute('INSERT OR REPLACE INTO facts VALUES (?,?,?,?)', (key, value or None, int(not value), now))
+                db.execute('INSERT OR REPLACE INTO confirmed_profile VALUES (?,?,?)', (key, value, now))
+            db.execute('UPDATE profile_meta SET version=version+1 WHERE id=?', (self.PROFILE_ID,))
+            # Keep the conversation, but don't reuse candidates based on old identity data.
+            for row in db.execute('SELECT owner,body FROM sessions').fetchall():
+                state = json.loads(row['body'])
+                state.update(services={}, stores={}, meals=[], plan_id=None)
+                db.execute('UPDATE sessions SET body=? WHERE owner=?', (json.dumps(state, ensure_ascii=False), row['owner']))
+            return self._card(db)
 
     def profile(self):
         with self.connect() as db:
             return self._profile(db)
+
+    def model_profile(self):
+        profile = self.profile()
+        profile['facts'] = {key: value for key, value in profile['facts'].items()
+                            if not is_critical(key) or key in profile['confirmed_fields']}
+        return profile
 
     def list_facts(self):
         return self.profile()['facts']
@@ -119,6 +161,7 @@ class FoundationStore:
             if db.execute('SELECT count(*) FROM facts WHERE deleted=0').fetchone()[0] >= 100 and not db.execute('SELECT 1 FROM facts WHERE key=? AND deleted=0', (key,)).fetchone():
                 raise ValueError('个人资料最多保存 100 项，请先整理。')
             db.execute('INSERT OR REPLACE INTO facts VALUES (?,?,0,?)', (key, value.strip(), time.time()))
+            db.execute('DELETE FROM confirmed_profile WHERE key=?', (key,))
             db.execute('UPDATE profile_meta SET version=version+1 WHERE id=?', (self.PROFILE_ID,))
             return self._profile(db)
 
@@ -127,6 +170,7 @@ class FoundationStore:
         with self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
             db.execute('INSERT OR REPLACE INTO facts VALUES (?,NULL,1,?)', (key, time.time()))
+            db.execute('DELETE FROM confirmed_profile WHERE key=?', (key,))
             db.execute('UPDATE profile_meta SET version=version+1,forget_epoch=forget_epoch+1 WHERE id=?', (self.PROFILE_ID,))
             # Never restore a deleted fact from a stale display transcript.
             db.execute('DELETE FROM sessions')

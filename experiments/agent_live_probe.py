@@ -34,9 +34,9 @@ async def main():
   assert current['status']=='awaiting_confirmation' and not current.get('order')
   history=(await client.get('/api/chat/history')).json()
   report['history_message_count']=len(history['messages'])
-  reset=await client.post('/api/chat/reset',json={});assert reset.status_code==200
+  cancelled=await client.post('/api/plans/'+p['id']+'/cancel',json={});assert cancelled.status_code==200
   after=(await client.get('/api/plans/'+p['id'])).json()['plan']
-  report['reset_plan_status']=after['status'];report['ok']=True
+  report['local_plan_status']=after['status'];report['ok']=True
  Path('.local-data/agent-live-validation.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
- print('PASS: real model -> real stores -> real recommendations -> second meal plan; no orders; reset cancelled plan',flush=True)
+ print('PASS: real model -> real stores -> real recommendations -> second meal plan; no orders; cancelled local proposal',flush=True)
 asyncio.run(main())

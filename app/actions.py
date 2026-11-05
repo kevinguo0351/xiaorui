@@ -118,6 +118,12 @@ class ActionManager:
                     plan.update(status=status, confirmation_token=secrets.token_urlsafe(32))
                     self._write(db, owner, plan)
 
+    def invalidate_all_pending(self):
+        with self.connect() as db:
+            owners = [row[0] for row in db.execute('SELECT DISTINCT owner FROM actions')]
+        for owner in owners:
+            self.invalidate_pending(owner)
+
     def prepare(self, owner, provider, action, request, quote):
         if provider not in self.PROVIDERS or action not in {'create','cancel'}:
             raise ActionError('不支持这项操作。')

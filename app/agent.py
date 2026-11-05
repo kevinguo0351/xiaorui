@@ -13,6 +13,7 @@ from dotenv import dotenv_values
 from pydantic import ValidationError
 
 from app.foundation_store import FoundationStore
+from app.profile_card import is_critical
 from app.nanobot_runtime import build_runtime, data_context, SYSTEM
 from app.plans import PlanError
 from app.skills import SkillRegistry, SCHEMAS, TOOLS, catalog
@@ -239,12 +240,16 @@ class AgentService:
         try:
             args = SCHEMAS[name][0].model_validate(arguments)
             if args.action == 'list':
-                return self.store.profile()
+                return self.store.model_profile()
+            if is_critical(args.key):
+                return {'error': '家庭住址、本人和联系人电话等重要资料，请在右上角“我的资料卡”中填写、核对并确认保存。聊天不能自动修改或删除这些资料。'}
             if args.action == 'set':
-                profile = self.store.set_fact(args.key, args.value)
+                self.store.set_fact(args.key, args.value)
+                profile = self.store.model_profile()
                 return {'saved': True, 'key': args.key, 'profile': profile}
             # Invalidating the conversation generation prevents old SDK history recall.
-            profile = self.store.delete_fact(args.key)
+            self.store.delete_fact(args.key)
+            profile = self.store.model_profile()
             current = self.store.session(owner)
             session.conversation_id = current['conversation_id']
             session.forget_epoch = current['forget_epoch']
@@ -269,7 +274,7 @@ class AgentService:
             return result
 
         async def context(request):
-            return [data_context('canonical_profile', self.store.profile()),
+            return [data_context('canonical_profile', self.store.model_profile()),
                     data_context('service_candidates', model_safe(session.services)),
                     data_context('recent_actions', model_safe([self.actions.public(p) for p in self.actions.list(owner)[:8]])),
                     data_context('current_candidates', {

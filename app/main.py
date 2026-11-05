@@ -22,6 +22,8 @@ from app.foundation_scheduler import FoundationScheduler
 from app.actions import ActionError
 from app.contact import ContactService
 from app.attachments import ImageStore
+from app.profile_card import ProfileConflict
+from typing import Literal
 
 ROOT = Path(__file__).resolve().parents[1]
 settings = dotenv_values(ROOT / '.env')
@@ -176,13 +178,7 @@ async def chat(body: ChatRequest, request: Request):
 
 @app.post('/api/chat/reset')
 async def reset_chat(body: Body, request: Request):
-    if contact.has_pending(request.state.owner) or (request.state.owner in contact.workers and not contact.workers[request.state.owner].done()):
-        raise HTTPException(409, '消息仍在处理中，请稍后开始新对话。')
-    await agent.reset(request.state.owner)
-    with contact.db() as db:
-        db.execute('DELETE FROM events WHERE owner=?', (request.state.owner,))
-        db.execute('DELETE FROM inbox WHERE owner=?', (request.state.owner,))
-    return {'ok': True}
+    raise HTTPException(410, '小瑞保留同一个持续对话，不再提供新对话入口。重要资料请在“我的资料卡”中管理。')
 
 
 @app.get('/api/chat/history')
@@ -198,6 +194,40 @@ async def foundation_status():
 @app.get('/api/profile')
 async def personal_profile():
     return agent.store.profile()
+
+
+class ProfileCardUpdate(Body):
+    version: int = Field(ge=0, strict=True)
+    fields: dict[str, str] = Field(min_length=1, max_length=9)
+    confirmation_text: Literal['确认保存资料']
+
+
+@app.get('/api/profile/card')
+async def profile_card():
+    return agent.store.profile_card()
+
+
+@app.put('/api/profile/card')
+async def update_profile_card(body: ProfileCardUpdate):
+    # Synchronous mutation after these checks cannot interleave with a chat tool.
+    if any(session.lock.locked() for session in agent.sessions.values()):
+        raise HTTPException(409, '小瑞正在处理消息，请等本轮回复结束后再保存资料。')
+    try:
+        card = agent.store.save_profile_card(body.version, body.fields)
+        agent.sessions.clear()
+        agent.actions.invalidate_all_pending()
+        # Legacy pickup proposals must also be reviewed after identity changes.
+        with agent.plans.connect() as db:
+            for row in db.execute('SELECT body FROM plans').fetchall():
+                plan = json.loads(row['body'])
+                if plan['status'] in {'awaiting_confirmation', 'needs_review'}:
+                    plan['status'] = 'superseded'
+                    agent.plans.write(db, plan)
+        return card
+    except ProfileConflict as exc:
+        raise HTTPException(409, str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
 
 
 @app.get('/api/tasks')
