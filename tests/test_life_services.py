@@ -47,6 +47,25 @@ class LifeServicesTests(unittest.IsolatedAsyncioTestCase):
         guard.filter(record)
         self.assertNotIn('unit-private-key', logging.Formatter().format(record))
 
+    async def test_encoded_credentials_redacted_from_message_and_exception(self):
+        import sys
+        from urllib.parse import quote_plus
+        secret = 'offline-only+/= value'
+        encoded = quote_plus(secret)
+        guard = CredentialFilter()
+        guard.secrets.add(secret)
+        try:
+            raise RuntimeError('https://example.invalid/?key=' + encoded.lower())
+        except RuntimeError:
+            record = logging.LogRecord('httpx', logging.ERROR, '', 0,
+                'request URL https://example.invalid/?key=%s&other=kept', (encoded,), sys.exc_info())
+        guard.filter(record)
+        rendered = logging.Formatter().format(record)
+        for marker in (secret, encoded, encoded.lower()):
+            self.assertNotIn(marker, rendered)
+        self.assertIn('other=kept', rendered)
+        self.assertIn('[REDACTED]', rendered)
+
     async def test_luckin_foreign_or_fabricated_choice_cannot_reach_provider(self):
         call = self.agent.life_skills.luckin.call
         call.return_value = [{'deptId': 123, 'deptName': 'unit'}]

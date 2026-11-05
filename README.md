@@ -29,6 +29,8 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 Linux 电脑可运行 `./scripts/open-chat.sh` 自动启动并打开原版首页；本机桌面另有“小瑞原版”入口。`127.0.0.1` 仅能在运行服务的电脑访问，不能当作手机或其他电脑的共享链接。
 
+原版现已加入左侧动态小瑞、可改名头像、家人 API/MCP 设置与输入框长按语音；点击左侧头像进入设置。[新版截图与验收](docs/acceptance/warm-design.md)。
+
 ## Flutter 陪伴式预览
 
 新增大麦克风、任务板和设置入口，使用独立 Flutter 客户端，复用现有后端。运行 `./scripts/start-flutter.sh --build` 后打开 http://127.0.0.1:8000/flutter/ 。该入口强制只读，原 React 首页保留。配置与验收范围见 [Flutter 预览说明](docs/flutter-preview.md)。

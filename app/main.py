@@ -18,6 +18,7 @@ from app.mcd import McdService, McdRejectedError, mcd_token
 from app.plans import PlanStore, PlanError
 from app.recommendations import recommend
 from app.voice import router as voice_router
+from app.settings import router as settings_router
 from app.agent import AgentService, AgentError
 from app.foundation_scheduler import FoundationScheduler
 from app.actions import ActionError
@@ -45,6 +46,7 @@ async def lifespan(app):
 
 app = FastAPI(title='小瑞 · 本地生活助手', docs_url=None, redoc_url=None, lifespan=lifespan)
 app.include_router(voice_router)
+app.include_router(settings_router)
 service = McdService()
 plans = PlanStore(ROOT / '.local-data/plans.sqlite3', recover_running=False)
 agent = AgentService(service, plans)
@@ -351,8 +353,8 @@ async def confirm(plan_id: str, body: Confirmation, request: Request):
 
 
 DIST = ROOT / 'frontend/dist'
-if (DIST / 'assets').exists():
-    app.mount('/assets', StaticFiles(directory=DIST / 'assets'), name='assets')
+app.mount('/assets', StaticFiles(directory=DIST / 'assets', check_dir=False), name='assets')
+app.mount('/mascot', StaticFiles(directory=DIST / 'mascot', check_dir=False), name='mascot')
 
 
 @app.get('/')

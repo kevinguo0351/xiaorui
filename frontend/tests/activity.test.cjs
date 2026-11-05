@@ -8,7 +8,7 @@ const code=ts.transpileModule(fs.readFileSync(require.resolve('../src/main.tsx')
 vm.runInNewContext(code,{module:moduleUnderTest,exports:moduleUnderTest.exports,require:name=>{
  if(name==='react-dom/client')return{createRoot:()=>({render(){}})};
  if(name==='./useVoice')return{};
- if(name==='./ActionCard')return{};
+ if(name==='./ActionCard'||name==='./Companion'||name==='./SettingsDialog'||name==='./HoldToTalk')return{};
  if(name.endsWith('.css'))return{};
  return require(name);
 },document:{getElementById:()=>({})}});

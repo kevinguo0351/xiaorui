@@ -5,16 +5,16 @@ const React=require('react');
 const code=ts.transpileModule(fs.readFileSync(require.resolve('../src/main.tsx'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText;
 function harness(){
  const slots=[];let index=0,callbacks,source;
- const spoken=[];let cancellations=0;
+ const spoken=[];const requests=[];let cancellations=0;
  const voice={phase:'listening',inCall:true,recording:false,transcript:'',speaking:false,loadingSpeech:false,speak:async text=>spoken.push(text),stopSpeech(){},cancel(){},cancelRecording(){cancellations++;voice.phase='idle';voice.recording=false;},endCall(){}};
  const hooks={...React,useState(initial){const i=index++;if(!(i in slots))slots[i]=typeof initial==='function'?initial():initial;return[slots[i],value=>{slots[i]=typeof value==='function'?value(slots[i]):value;}];},useRef(value){const i=index++;if(!(i in slots))slots[i]={current:value};return slots[i];},useEffect(effect,deps){const i=index++;const old=slots[i];if(!old||!deps||deps.some((value,n)=>value!==old[n])){slots[i]=deps;effect();}}};
  class EventSource{constructor(){source=this;}close(){}}
  const module={exports:{}};
- const fetch=async url=>({ok:true,headers:{get:()=> 'application/json'},json:async()=>url==='/api/health'?{mcd_configured:true,agent_configured:true}:url==='/api/contact/state'?{events:[],cursor:0,pending:0}:url==='/api/chat/history'?{messages:[]}:url==='/api/actions'?{actions:[]}: {accepted:true}});
- vm.runInNewContext(code,{module,exports:module.exports,require:name=>name==='react'?hooks:name==='react-dom/client'?{createRoot:()=>({render(){}})}:name==='./useVoice'?{useVoice:(onFinal,onError,onSpeechStart)=>{callbacks={onFinal,onError,onSpeechStart};return voice;}}:name==='./ActionCard'?{}:name.endsWith('.css')?{}:require(name),document:{getElementById:()=>({})},EventSource,fetch,crypto:require('node:crypto'),setInterval:()=>1,clearInterval(){},console});
+ const fetch=async (url,options)=>{requests.push({url,options});return{ok:true,headers:{get:()=> 'application/json'},json:async()=>url==='/api/health'?{mcd_configured:true,agent_configured:true}:url==='/api/contact/state'?{events:[],cursor:0,pending:0}:url==='/api/chat/history'?{messages:[]}:url==='/api/actions'?{actions:[]}: {accepted:true}};};
+ vm.runInNewContext(code,{module,exports:module.exports,require:name=>name==='react'?hooks:name==='react-dom/client'?{createRoot:()=>({render(){}})}:name==='./useVoice'?{useVoice:(onFinal,onError,onSpeechStart)=>{callbacks={onFinal,onError,onSpeechStart};return voice;}}:name==='./Companion'?{Companion(){},CompanionAvatar(){},companionMood:()=> 'idle'}:name==='./SettingsDialog'?{SettingsDialog(){},useCompanionSettings:()=>({settings:{name:'小瑞',avatar:'portrait'},updateSettings(){}})}:name==='./HoldToTalk'?{HoldToTalk(){}}:name==='./ActionCard'?{}:name.endsWith('.css')?{}:require(name),document:{getElementById:()=>({})},EventSource,fetch,crypto:require('node:crypto'),setInterval:()=>1,clearInterval(){},console});
  const render=()=>{index=0;return module.exports.App();};
  const flush=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
- return{render,flush,spoken,voice,get cancellations(){return cancellations;},get callbacks(){return callbacks;},emit:event=>source.onmessage({data:JSON.stringify(event)})};
+ return{render,flush,spoken,voice,requests,get cancellations(){return cancellations;},get callbacks(){return callbacks;},emit:event=>source.onmessage({data:JSON.stringify(event)})};
 }
 function all(node,predicate){if(!node||typeof node!=='object')return[];return[predicate(node)?node:null,...React.Children.toArray(node.props?.children).flatMap(child=>all(child,predicate))].filter(Boolean);}
 const reply=(id,text,events=[])=>({type:'completed',message_id:id,response:{text,speech_text:text,events}});
@@ -57,4 +57,29 @@ test('late reply cannot autoplay during single-message recognition with micropho
  h.emit({type:'started',message_id:'old'});h.emit(reply('old','不得在识别期间自动播放'));assert.deepEqual(h.spoken,[]);
  h.voice.phase='idle';h.render();h.callbacks.onFinal('新的语音最终结果');await h.flush();h.render();
  h.emit({type:'started',message_id:'new'});h.emit(reply('new','新的语音回复'));assert.deepEqual(h.spoken,['新的语音回复']);
+});
+
+test('welcome suggestions submit an actual user request with missing location instead of showing invented results',async()=>{
+ for(const [index,expected] of [[0,/所在的位置/],[1,/出发地和目的地/],[2,/聊会儿天/]]){
+  const h=harness();h.render();await h.flush();let tree=h.render();
+  const cards=all(tree,node=>node.type==='button'&&node.props.className==='suggestion-card');assert.equal(cards.length,3);
+  cards[index].props.onClick();await h.flush();tree=h.render();
+  const request=h.requests.find(r=>r.url==='/api/contact/messages');assert.ok(request);assert.match(JSON.parse(request.options.body).text,expected);
+  assert.equal(all(tree,node=>node.type==='article'&&node.props.className==='message assistant').length,0);
+ }
+});
+test('identity opens settings and closing refreshes configuration health without submitting a query',async()=>{
+ const h=harness();h.render();await h.flush();let tree=h.render();
+ const identity=all(tree,node=>node.type==='button'&&node.props.className==='identity-button')[0];assert.match(identity.props['aria-label'],/名字、头像和服务/);identity.props.onClick();tree=h.render();
+ const dialog=all(tree,node=>node.type?.name==='SettingsDialog')[0];assert.equal(dialog.props.open,true);assert.equal(all(tree,node=>node.type?.name==='HoldToTalk')[0].props.disabled,true);
+ const before=h.requests.filter(r=>r.url==='/api/health').length;dialog.props.onClose();await h.flush();
+ assert.equal(h.requests.filter(r=>r.url==='/api/health').length,before+1);assert.equal(h.requests.filter(r=>r.url==='/api/contact/messages').length,0);
+});
+test('hold capture stays enabled for its own gesture, blocks a second recognition, and resets on repeated errors',async()=>{
+ const h=harness();h.render();await h.flush();h.voice.inCall=false;h.voice.phase='idle';let tree=h.render();
+ const hold=()=>all(tree,node=>node.type?.name==='HoldToTalk')[0];assert.equal(hold().props.disabled,false);const originalReset=hold().props.resetKey;
+ hold().props.onHoldChange(true);h.voice.phase='connecting';h.voice.recording=true;tree=h.render();assert.equal(hold().props.disabled,false);
+ h.callbacks.onError('同一条配置错误');tree=h.render();assert.equal(hold().props.resetKey,originalReset+1);
+ h.callbacks.onError('同一条配置错误');tree=h.render();assert.equal(hold().props.resetKey,originalReset+2);
+ hold().props.onHoldChange(false);h.voice.phase='finishing';h.voice.recording=false;tree=h.render();assert.equal(hold().props.disabled,true);
 });

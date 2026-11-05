@@ -7,7 +7,9 @@ import asyncio
 import json
 import logging
 import os
+import re
 import traceback
+from urllib.parse import quote, quote_plus
 from datetime import timedelta
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -44,10 +46,17 @@ class CredentialFilter(logging.Filter):
     def filter(self, record):
         message = record.getMessage()
         exception = ''.join(traceback.format_exception(*record.exc_info)) if record.exc_info else record.exc_text
-        for secret in self.secrets:
-            message = message.replace(secret, '[REDACTED]')
-            if exception:
-                exception = exception.replace(secret, '[REDACTED]')
+        def redact(value):
+            if not value:
+                return value
+            for secret in self.secrets:
+                if secret:
+                    for form in {secret, quote(secret, safe=''), quote_plus(secret, safe='')}:
+                        value = value.replace(form, '[REDACTED]')
+            # Protect encoded key parameters even if their escape case differs.
+            return re.sub(r'''([?&](?:key|api_key)=)[^&\s'"<>]+''',
+                          r'\1[REDACTED]', value, flags=re.IGNORECASE)
+        message, exception = redact(message), redact(exception)
         record.msg, record.args = message, ()
         if record.exc_info or record.exc_text:
             record.exc_info, record.exc_text = None, exception
