@@ -66,3 +66,23 @@ test('identity opens settings and closing refreshes configuration health without
  const before=h.requests.filter(r=>r.url==='/api/health').length;dialog.props.onClose();await h.flush();
  assert.equal(h.requests.filter(r=>r.url==='/api/health').length,before+1);assert.equal(h.requests.filter(r=>r.url==='/api/contact/messages').length,0);
 });
+
+test('original text composer exists, accepts typing, and sends actual text on Enter',async()=>{
+ const h=harness();h.voice.inCall=false;h.voice.phase='idle';h.render();await h.flush();let tree=h.render();
+ const textbox=()=>all(tree,node=>node.type==='textarea'&&node.props.id==='chat-input')[0];
+ assert.ok(textbox(),'original textarea must remain in text mode');
+ assert.equal(textbox().props.placeholder,'发消息给小瑞');
+ textbox().props.onChange({target:{value:'陪我聊聊天'}});tree=h.render();assert.equal(textbox().props.value,'陪我聊聊天');
+ let prevented=false;textbox().props.onKeyDown({key:'Enter',shiftKey:false,nativeEvent:{isComposing:false},preventDefault(){prevented=true;}});await h.flush();tree=h.render();
+ assert.equal(prevented,true);const request=h.requests.find(r=>r.url==='/api/contact/messages');assert.equal(JSON.parse(request.options.body).text,'陪我聊聊天');assert.equal(textbox().props.value,'');
+});
+test('original composer preserves Shift+Enter and IME, with conditional text send button',async()=>{
+ const h=harness();h.voice.inCall=false;h.voice.phase='idle';h.render();await h.flush();let tree=h.render();
+ assert.equal(all(tree,node=>node.type==='button'&&node.props['aria-label']==='发送消息').length,0);
+ const box=()=>all(tree,node=>node.type==='textarea'&&node.props.id==='chat-input')[0];box().props.onChange({target:{value:'还在输入'}});tree=h.render();
+ const send=all(tree,node=>node.type==='button'&&node.props['aria-label']==='发送消息')[0];assert.ok(send);assert.equal(send.props.children,'发送');
+ for(const [shiftKey,isComposing]of [[true,false],[false,true]])box().props.onKeyDown({key:'Enter',shiftKey,nativeEvent:{isComposing},preventDefault(){assert.fail('newline/IME must not submit');}});
+ await h.flush();assert.equal(h.requests.filter(r=>r.url==='/api/contact/messages').length,0);
+ buttonByLabel(tree,'切换到语音输入').props.onClick();tree=h.render();assert.equal(all(tree,node=>node.type==='textarea').length,0);assert.ok(buttonByLabel(tree,'开始语音输入'));
+ buttonByLabel(tree,'切换到文字输入').props.onClick();tree=h.render();assert.equal(box().props.value,'还在输入');assert.ok(buttonByLabel(tree,'更多功能'));
+});
