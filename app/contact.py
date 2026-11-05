@@ -13,7 +13,7 @@ from uuid import uuid4
 from app.agent import AgentError
 from app.contact_events import contact_observer, contact_media
 
-CONFIRMATIONS = {'确认叫车', '确认下单', '确认取消'}
+CONFIRMATIONS = {'确认叫车', '确认下单', '确认取消', '确认新增地址'}
 
 
 class ContactService:

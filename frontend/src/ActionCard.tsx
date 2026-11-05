@@ -1,14 +1,14 @@
 import React,{useEffect,useRef,useState} from 'react';
 
-export type ActionPlan={id:string;provider:'didi'|'mcd'|'luckin';action:'create'|'cancel';status:string;
+export type ActionPlan={id:string;provider:'didi'|'mcd'|'luckin';action:'create'|'cancel'|'create_address';status:string;
  summary:Record<string,unknown>;amount_cents:number;version:number;confirmation_token:string;
  confirmation_text:string;execution_enabled:boolean;expires_at:number;error?:string;
  order?:{order_id?:string;payment_url?:string;last_status?:Record<string,any>;[key:string]:unknown}};
 const providers={didi:'滴滴出行',mcd:'麦当劳',luckin:'瑞幸咖啡'};
 const states:Record<string,string>={awaiting_confirmation:'请您核对',needs_review:'方案有变化，请再核对',
- created:'请求已提交',cancelled:'已取消',superseded:'已换新方案',expired:'方案已过期',unknown:'结果待核查',
+ address_created:'配送地址已创建',created:'请求已提交',cancelled:'已取消',superseded:'已换新方案',expired:'方案已过期',unknown:'结果待核查',
  rechecking:'正在重新核价',submitting:'正在提交',failed:'尚未完成',cancellation_requested:'取消请求已提交'};
-const names:Record<string,string>={store:'门店',address:'地址',address_detail:'门牌',product:'商品',attributes:'规格',
+const names:Record<string,string>={city:'城市',contact:'联系人',phone:'联系电话',privacy:'信息用途',store:'门店',address:'地址',address_detail:'门牌',product:'商品',attributes:'规格',
  quantity:'数量',fulfillment:'取餐方式',choices:'套餐内容',payment:'支付说明',fee_note:'费用说明',
  action:'操作',cancel_fee_yuan:'取消费用',tableware:'餐具',remark:'给商家的备注',fee_breakdown:'费用明细'};
 function details(value:unknown):string{
@@ -54,17 +54,18 @@ export function ActionCard({plan,active,speak,onChange,onPrepared}:{plan:ActionP
  const payment=plan.order?.payment_url;
  return <section className="order-card action-card" aria-label={`${providers[plan.provider]}操作方案`}>
   <div className="card-overline">{providers[plan.provider]} · {states[expired&&review?'expired':plan.status]||'请核对当前结果'}</div>
-  <h3>{plan.action==='cancel'?'取消订单方案':plan.provider==='didi'?'出行方案':'点餐方案'}</h3>
+  <h3>{plan.action==='create_address'?'新增配送地址':plan.action==='cancel'?'取消订单方案':plan.provider==='didi'?'出行方案':'点餐方案'}</h3>
   <dl className="action-details">{Object.entries(plan.summary).map(([key,value])=>{
    const label=names[key]||(/^[\u4e00-\u9fff]/.test(key)?key:'');const text=details(value);
    return label&&text?<div key={key}><dt>{label}</dt><dd>{text}</dd></div>:null;
   })}</dl>
-  <div className="total"><span>{plan.action==='cancel'?'取消费用':plan.provider==='didi'?'本次预估费用':'本次总价'}</span><strong>¥{(plan.amount_cents/100).toFixed(2)}</strong></div>
+  {plan.action!=='create_address'&&<div className="total"><span>{plan.action==='cancel'?'取消费用':plan.provider==='didi'?'本次预估费用':'本次总价'}</span><strong>¥{(plan.amount_cents/100).toFixed(2)}</strong></div>}
   {plan.provider==='didi'&&plan.action==='create'&&review&&<p className="note">确认后会真实叫车，关联账号可能免密扣款。请核对实际接送点，最终车费以平台为准。</p>}
   {plan.error&&<p className="note">{plan.error}</p>}
   {review&&!plan.execution_enabled&&<p className="note">家人尚未开启这项真实订单执行。</p>}
   {review&&active&&<div className="card-actions"><button className="primary" disabled={busy||expired||!plan.execution_enabled} onClick={()=>void act('confirm',{version:plan.version,confirmation_token:plan.confirmation_token,confirmation_text:plan.confirmation_text})}>{plan.confirmation_text}</button><button disabled={busy} onClick={()=>void act('cancel-plan')}>取消这个方案</button></div>}
   {review&&active&&<p className="note">也可以直接说：“{plan.confirmation_text}”。</p>}
+  {plan.status==='address_created'&&<p role="status">地址已保存至麦当劳。请继续查询配送地址，选择新地址查店点餐；尚未下单。</p>}
   {plan.status==='unknown'&&<p className="note">请先到官方渠道核查，这笔请求不会自动重复提交。</p>}
   {orderStatus&&<p className="order-progress" role="status">{orderStatus}</p>}
   {plan.order?.last_status?.expectDeliveryTime&&<p>平台预计送达：{String(plan.order.last_status.expectDeliveryTime)}</p>}

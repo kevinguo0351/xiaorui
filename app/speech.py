@@ -52,7 +52,9 @@ def amount(plan):
 def confirmation(plan):
     summary=plan.get('summary',{})
     start='方案有变化，我再跟您核对一下：' if plan.get('status')=='needs_review' else '我先跟您核对一下：'
-    if plan.get('action')=='cancel':
+    if plan.get('action')=='create_address':
+        text=start+f"新增麦当劳配送地址：{summary.get('city','')}{summary.get('address','')}，门牌{summary.get('address_detail','')}，联系人{summary.get('contact','')}，电话{summary.get('phone','')}。确认后会保存至麦当劳账号，尚不下单。"
+    elif plan.get('action')=='cancel':
         text=start+f"这是取消订单的方案，取消费用{amount(plan)}元。"
         if summary.get('原因'):
             text+='原因是'+str(summary['原因'])+'。'
@@ -84,6 +86,8 @@ def action_speech(plan):
         return confirmation(plan)
     if state in {'unknown','submitting','rechecking'}:
         return '这笔请求的结果还没有核实清楚，先别重复操作。请核对下面的记录，必要时到官方渠道查询。'
+    if state=='address_created':
+        return '麦当劳配送地址已创建。请继续查询配送地址并选择新地址点餐，尚未下单或付款。'
     if state=='created':
         order=plan.get('order') or {}
         if plan.get('provider')=='didi':

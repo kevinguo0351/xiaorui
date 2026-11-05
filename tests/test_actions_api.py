@@ -74,3 +74,22 @@ class ActionApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.json()['plan']['confirmation_text'],'确认取消')
         self.assertEqual(result.json()['plan']['status'],'awaiting_confirmation')
         self.adapter.execute.assert_not_awaited()
+
+    async def test_address_confirmation_http_with_orders_disabled(self):
+        self.agent.actions._enabled=lambda _:False
+        request=dict(city='北京',address='测试大楼',addressDetail='101',contactName='测试',phone='13800000000')
+        scenario=self.agent.scenarios['mcd']
+        self.agent.actions.register('mcd',scenario)
+        events=[]
+        result=await scenario.dispatch(self.agent._session(self.owner),self.owner,'mcd_prepare_address',request,events)
+        plan=result['plan']
+        scenario.execute=AsyncMock(return_value={'address_id':'new-address','status':'address_created'})
+        url=f'/api/actions/{plan["id"]}/confirm'
+        body=dict(version=plan['version'],confirmation_token=plan['confirmation_token'],confirmation_text='确认新增地址')
+        result=await self.client.post(url,json=body)
+        self.assertEqual(result.status_code,200)
+        self.assertEqual(result.json()['plan']['status'],'address_created')
+        self.assertIn('地址',result.json()['speech_text'])
+        result=await self.client.post(url,json=body)
+        self.assertEqual(result.json()['plan']['status'],'address_created')
+        scenario.execute.assert_awaited_once_with('create_address',request)

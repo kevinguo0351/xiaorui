@@ -26,6 +26,15 @@ class DeliveryAddresses(Args):
     city: Literal['北京','广州'] = '北京'
 
 
+class NewAddress(Args):
+    city: Literal['北京', '广州']
+    contactName: str = Field(min_length=1, max_length=50)
+    phone: str = Field(pattern=r'^1[0-9]{10}$')
+    address: str = Field(min_length=1, max_length=200)
+    addressDetail: str = Field(min_length=1, max_length=100)
+    gender: Literal['先生', '女士'] | None = None
+
+
 class Menu(Args):
     store_index: int = Field(ge=1, le=20, strict=True)
     keyword: str = Field(default='', max_length=100)
@@ -58,6 +67,8 @@ class Cancel(Order):
 
 
 SCHEMAS = {
+    'mcd_current_location': (Args, '读取本次已授权定位，通过地图查询附近地址供用户核对；不是精确门牌，不是家，不能据此猜联系人、电话或门牌。'),
+    'mcd_prepare_address': (NewAddress, '准备新增麦当劳配送地址的确认卡片，不写入。仅填用户明确提供或核对的城市、地址、门牌、联系人和完整手机号码；不得用旧地址或掩码电话猜填。用户确认新增地址后由宿主写入，再查询地址列表选择新地址继续点餐。'),
     'mcd_search_pickup': (Stores, '搜索北京麦当劳到店门店，开始新的麦当劳候选；不是外卖。'),
     'mcd_delivery_addresses': (DeliveryAddresses, '查询本人麦乐送已有地址供用户选择。默认北京；只有用户明确要求广州时才传city=广州，不自动换城市，不创建地址。'),
     'mcd_delivery_stores': (DeliveryStores, '按用户选择的本轮配送地址查询可配送麦当劳门店，不猜地址或配送范围，不自动换城市。'),
@@ -114,9 +125,11 @@ def _safe_order(data):
 class McdScenario:
     schemas = SCHEMAS
 
-    def __init__(self, transactions, provider=None):
+    def __init__(self, transactions, provider=None, location_provider=None, map_provider=None):
         self.transactions = transactions
         self.provider = provider or McdService()
+        self.location_provider = location_provider
+        self.map_provider = map_provider
 
     async def _read(self, name, args):
         async with self.provider._connection() as call:
@@ -134,6 +147,24 @@ class McdScenario:
             if name in {'mcd_search_pickup','mcd_delivery_addresses','mcd_delivery_stores','mcd_menu','mcd_prepare_order'}:
                 self.transactions.invalidate_pending(owner)
             state = session.services.setdefault('mcd', {})
+            if name == 'mcd_current_location':
+                point = self.location_provider(owner) if self.location_provider else None
+                if not point:
+                    events.append({'type':'location_request'})
+                    return {'error':'没有当前有效定位，请授权定位或提供收餐地址。'}
+                if not self.map_provider:
+                    return {'error':'地址解析暂不可用，请提供城市和收餐地址。'}
+                data = await self.map_provider.call('maps_regeocode', {
+                    'location': f'{point["longitude"]},{point["latitude"]}'})
+                return {'nearby_address':data, 'accuracy_meters':point['accuracy'],
+                        'next':'请用户核对城市及附近地址，补充实际楼栋门牌、收餐联系人和完整手机号；定位不能代替门牌，不保存为家庭地址。'}
+            if name == 'mcd_prepare_address':
+                request = args.model_dump(exclude_none=True)
+                quote = await self.quote('create_address', request)
+                plan = self.transactions.prepare(owner, provider='mcd', action='create_address', request=request, quote=quote)
+                events.append({'type':'action_plan','plan':plan})
+                return {'plan':plan,'address_created':False,
+                        'next':'请核对地址和联系方式，确认新增地址后才发送给麦当劳；这不会下单或付款。'}
             if name == 'mcd_search_pickup':
                 state.clear()
                 stores = await self.provider.search_stores('北京', args.keyword)
@@ -153,10 +184,10 @@ class McdScenario:
                 state['city'] = args.city
                 if not state['addresses']:
                     return {'addresses':[], 'needs_setup':True,
-                        'next':f'当前接口没有返回可确认的{args.city}配送地址。请家人核对麦当劳官方App／小程序与Token的账号及收餐地址，然后重新查询；不要用其他城市地址代替。'}
+                        'next':f'当前接口没有返回可确认的{args.city}配送地址。可使用本次定位或用户提供的新地址，核对城市、地址、门牌、联系人及完整手机号后调用mcd_prepare_address；不要用其他城市旧地址代替。'}
                 return {'addresses':[{'index':i+1,'address':a['address'], 'detail':a['addressDetail'], 'city':a['city']}
                     for i,a in enumerate(state['addresses'])],
-                    'next':f'请确认{args.city}配送地址；没有地址时请家人先在官方渠道配置。'}
+                    'next':f'请确认{args.city}配送地址；若本次在新地方，请核对新地址及联系方式后准备新增地址确认卡片。'}
             if name == 'mcd_delivery_stores':
                 address = _pick(state.get('addresses',[]), args.address_index)
                 state.pop('stores',None); state.pop('products',None); state.pop('selected_store',None)
@@ -255,7 +286,7 @@ class McdScenario:
                 return {'plan':action,'cancelled':False}
             return {'error':'该麦当劳任务尚不支持。'}
         except ValidationError:
-            return {'error':'请使用本轮候选序号，并补充正确的商品数量或选项。'}
+            return {'error':'请补充城市、收餐地址、具体门牌、联系人和11位完整手机号；性别不明确可不填。'} if name=='mcd_prepare_address' else {'error':'请使用本轮候选序号，并补充正确的商品数量或选项。'}
         except ValueError as exc:
             return {'error':str(exc)}
         except Exception:
@@ -306,6 +337,13 @@ class McdScenario:
                 'comparison':{'payload':payload,'amount_cents':amount,'budget_cents':budget,'labels':request['labels'],'fees':fees}}
 
     async def quote(self,action,request):
+        if action=='create_address':
+            payload = NewAddress.model_validate(request).model_dump(exclude_none=True)
+            return {'request':payload, 'amount_cents':0, 'comparison':payload,
+                    'summary':{'action':'新增配送地址', 'city':payload['city'],
+                        'address':payload['address'], 'address_detail':payload['addressDetail'],
+                        'contact':payload['contactName'], 'phone':payload['phone'],
+                        'privacy':'确认后将以上信息发送并保存至麦当劳账号；不修改小瑞家庭地址，不创建餐饮订单。'}}
         if action=='create':
             payload=request['payload']
             if payload['orderType']==2:
@@ -333,6 +371,14 @@ class McdScenario:
         return _safe_order(await self._read('query-order', {'orderId':order_id}))
 
     async def execute(self,action,request):
+        if action=='create_address':
+            payload = NewAddress.model_validate(request).model_dump(exclude_none=True)
+            async with self.provider._connection() as call:
+                data = await call('delivery-create-address', payload)
+            if not isinstance(data,dict) or not data.get('addressId'):
+                raise RuntimeError('新增地址结果未知，请重新查询地址列表核查，不得自动重试。')
+            return {'address_id':str(data['addressId']), 'status':'address_created',
+                    'note':'配送地址已创建，请重新查询配送地址并选择新地址继续点餐；尚未下单。'}
         if action=='create':
             data=await self.provider.create_order(request['payload'])
             if not data.get('order_id'):raise RuntimeError('创建结果未知，不得重试。')

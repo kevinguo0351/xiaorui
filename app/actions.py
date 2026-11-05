@@ -89,7 +89,7 @@ class ActionManager:
         result = {key: copy.deepcopy(plan[key]) for key in (
             'id','provider','action','summary','amount_cents','status','version',
             'confirmation_token','expires_at','created_at','order','error') if key in plan}
-        result['execution_enabled'] = self.enabled(plan['provider'])
+        result['execution_enabled'] = plan['action']=='create_address' or self.enabled(plan['provider'])
         result['confirmation_text'] = self.phrase(plan)
         if result.get('order'):
             result['order'] = {k:v for k,v in result['order'].items() if k not in {'provider_response','raw','request','traceId','confirmation_token'}}
@@ -97,6 +97,8 @@ class ActionManager:
 
     @staticmethod
     def phrase(plan):
+        if plan['action'] == 'create_address':
+            return '确认新增地址'
         if plan['action'] == 'cancel':
             return '确认取消'
         return '确认叫车' if plan['provider'] == 'didi' else '确认下单'
@@ -125,7 +127,7 @@ class ActionManager:
             self.invalidate_pending(owner)
 
     def prepare(self, owner, provider, action, request, quote):
-        if provider not in self.PROVIDERS or action not in {'create','cancel'}:
+        if provider not in self.PROVIDERS or (action not in {'create','cancel'} and not (provider=='mcd' and action=='create_address')):
             raise ActionError('不支持这项操作。')
         self._quote(quote)
         if action == 'create' and self.blocked(provider):
@@ -191,7 +193,7 @@ class ActionManager:
                 p.update(status='expired', error='报价过期，请重新查询。')
                 self._write(db, owner, p)
                 return self.public(p)
-            if not self.enabled(p['provider']):
+            if p['action'] != 'create_address' and not self.enabled(p['provider']):
                 raise ActionError('家人尚未开启这项真实订单执行；本次没有提交。')
             if p['action'] == 'create' and self.blocked(p['provider']):
                 raise ActionError(self.blocked(p['provider']))
@@ -218,10 +220,10 @@ class ActionManager:
         self._update(owner,id,status='submitting',request=quote['request'],confirmation_token=secrets.token_urlsafe(32))
         try:
             result = await adapter.execute(p['action'], copy.deepcopy(quote['request']))
-            if not isinstance(result, dict) or not result.get('order_id'):
+            if not isinstance(result, dict) or not result.get('address_id' if p['action']=='create_address' else 'order_id'):
                 raise ActionError('未取得可核实的订单结果。')
             response = result.pop('provider_response', None)
-            status = 'created' if p['action']=='create' else ('cancelled' if result.get('cancelled') is True or result.get('status')=='cancelled' else 'cancellation_requested')
+            status = 'address_created' if p['action']=='create_address' else 'created' if p['action']=='create' else ('cancelled' if result.get('cancelled') is True or result.get('status')=='cancelled' else 'cancellation_requested')
             return self.public(self._update(owner,id,status=status,
                                             order=result,provider_response=response,error=None))
         except BaseException as exc:

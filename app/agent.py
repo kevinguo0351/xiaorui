@@ -116,7 +116,7 @@ class AgentService:
         self.locations = LocationStore()
         self.scenarios = {
             'didi':DidiScenario(self.actions, self.life_skills.didi, self.locations.get),
-            'mcd':McdScenario(self.actions, service),
+            'mcd':McdScenario(self.actions, service, self.locations.get, self.life_skills.didi),
             'luckin':LuckinScenario(self.actions, self.life_skills.luckin),
         }
         self.scenario_tools = {}
@@ -342,7 +342,7 @@ class AgentService:
                 async with asyncio.timeout(180):
                     phrase = text.strip().rstrip('。！!，, ')
                     pending_action = self.actions.pending(owner)
-                    if phrase in {'确认叫车','确认下单','确认取消'} and not contact_media.get():
+                    if phrase in {'确认叫车','确认下单','确认取消','确认新增地址'} and not contact_media.get():
                         if (pending_action is None or phrase != self.actions.phrase(pending_action)
                                 or (expected_confirmation is not None and expected_confirmation != [pending_action['id'], pending_action['version']])):
                             answer = '目前没有对应的待确认方案。请先告诉我具体需求，核对方案后再确认。'
@@ -393,7 +393,7 @@ class AgentService:
 
     @staticmethod
     def proposal_text(plan):
-        labels={'store':'门店','product':'商品','quantity':'数量','fulfillment':'取餐方式',
+        labels={'city':'城市','contact':'联系人','phone':'联系电话','privacy':'信息用途','store':'门店','product':'商品','quantity':'数量','fulfillment':'取餐方式',
                 'address':'地址','address_detail':'门牌','choices':'套餐内容','attributes':'规格',
                 'tableware':'餐具','remark':'给商家的备注','fee_breakdown':'其中'}
         parts=[]
@@ -409,7 +409,7 @@ class AgentService:
             if not isinstance(value,(str,int,float)):
                 continue
             parts.append(f'{label}：{str(value).rstrip("。；; ")}')
-        heading='取消方案' if plan['action']=='cancel' else '出行方案' if plan['provider']=='didi' else '点餐方案'
+        heading='新增配送地址' if plan['action']=='create_address' else '取消方案' if plan['action']=='cancel' else '出行方案' if plan['provider']=='didi' else '点餐方案'
         parts=parts[:10]
         answer=f'{heading}，'+ '；'.join(parts)+f'。本次{"预估" if plan["provider"]=="didi" else ""}费用 {plan["amount_cents"]/100:.2f} 元。'
         if plan['execution_enabled']:
@@ -420,6 +420,8 @@ class AgentService:
 
     @staticmethod
     def action_text(plan):
+        if plan['status'] == 'address_created':
+            return '麦当劳配送地址已创建。请查询配送地址列表，选择新地址继续查店点餐；尚未创建餐饮订单或付款。'
         if plan['status'] == 'created':
             return ('已提交叫车请求，正在等平台匹配司机；还不能说司机已接单。' if plan['provider']=='didi'
                     else '订单已创建。是否已支付、备餐或配送，要以官方订单状态为准；我没有替您付款。')
